@@ -1,0 +1,5 @@
+0.0.0.0 google-analytics.com
+0.0.0.0 facebook.com
+0.0.0.0 ads.youtube.com
+0.0.0.0 doubleclick.net
+0.0.0.0 tracking.example.com
