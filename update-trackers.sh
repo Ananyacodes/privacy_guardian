@@ -10,13 +10,13 @@
 set -euo pipefail
 
 # ─── Config ──────────────────────────────────────────────────────────────────
-HOSTS_URL="https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
 BLOCKLIST_URL="https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset"
 TMPDIR_BASE="/tmp/pg-tracker-update"
 LOG_TAG="privacy-guardian"
 MAX_RETRIES=3
 RETRY_DELAY=10  # seconds between retries
 MIN_ENTRIES=100  # sanity check — abort if parsed list is suspiciously small
+MIN_IPV6_ENTRIES=10  # keep existing IPv6 set if upstream provides too few entries
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 log()  { logger -t "$LOG_TAG" "$1"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
@@ -32,10 +32,10 @@ done
 TMPDIR=$(mktemp -d "${TMPDIR_BASE}.XXXXXX")
 trap 'rm -rf "$TMPDIR"' EXIT  # Always clean up temp files
 
-HOSTS_FILE="$TMPDIR/hosts.txt"
 BLOCKLIST_FILE="$TMPDIR/blocklist.txt"
-IPV4_STAGED="$TMPDIR/tracker_ips_staged.nft"
-IPV6_STAGED="$TMPDIR/tracker_ips6_staged.nft"
+IPV4_PARSED="$TMPDIR/ipv4_parsed.txt"
+IPV6_PARSED="$TMPDIR/ipv6_parsed.txt"
+NFT_BATCH="$TMPDIR/tracker_update_batch.nft"
 
 # ─── Safe download with retry ─────────────────────────────────────────────────
 safe_download() {
@@ -122,74 +122,73 @@ parse_firehol_ipv4() {
           done
 }
 
-# ─── Build staged nftables set files ──────────────────────────────────────────
-build_staged_sets() {
-    local ipv4_list="$1"
-
-    local ipv4_count
-    ipv4_count=$(wc -l < "$ipv4_list")
-
-    if [ "$ipv4_count" -lt "$MIN_ENTRIES" ]; then
-        die "Parsed IPv4 list has only $ipv4_count entries (minimum: $MIN_ENTRIES). Aborting to prevent wiping set."
-    fi
-
-    log "Building staged nftables set with $ipv4_count IPv4 entries..."
-
-    # Build a valid nft script that adds to a NEW temporary set
-    # We use a temp set name so we can validate before swapping
-    {
-        echo "# Staged tracker IP set — generated $(date)"
-        echo "# DO NOT apply directly — use update-trackers.sh atomic swap"
-        echo ""
-        echo "table inet filter {"
-        echo "    set tracker_ips_staged {"
-        echo "        type ipv4_addr"
-        echo "        flags interval"
-        echo "        auto-merge"
-        echo "        elements = {"
-        # Format as comma-separated with 4 per line for readability
-        paste -d, - - - - < "$ipv4_list" \
-            | sed 's/^/            /' \
-            | sed 's/,/, /g'
-        echo "        }"
-        echo "    }"
-        echo "}"
-    } > "$IPV4_STAGED"
-
-    log "Staged set file built: $IPV4_STAGED"
+parse_firehol_ipv6() {
+    local infile="$1"
+    grep -v '^#' "$infile" \
+        | grep -v '^$' \
+        | awk '{print $1}' \
+        | while IFS= read -r entry; do
+            if is_valid_ipv6 "$entry"; then
+                echo "$entry"
+            fi
+          done
 }
 
-# ─── Atomic set swap ──────────────────────────────────────────────────────────
-atomic_swap() {
-    local staged_file="$1"
+# ─── Build and apply one atomic nft batch ─────────────────────────────────────
+build_and_apply_batch() {
+    local ipv4_list="$1"
+    local ipv6_list="$2"
+    local update_ipv6="$3"
 
-    log "Validating staged ruleset..."
-    if ! nft --check -f "$staged_file" 2>/tmp/nft-validate-err; then
-        local err
-        err=$(cat /tmp/nft-validate-err)
-        die "nft validation failed — keeping existing set. Error: $err"
-    fi
+    {
+        echo "# Privacy Guardian tracker update batch — generated $(date)"
+        echo "flush set inet filter tracker_ips"
+        echo "add element inet filter tracker_ips {"
+        awk '
+            BEGIN { c = 0; line = "    " }
+            {
+                line = line (c > 0 ? ", " : "") $0
+                c++
+                if (c == 4) {
+                    print line
+                    c = 0
+                    line = "    "
+                }
+            }
+            END {
+                if (c > 0) print line
+            }
+        ' "$ipv4_list"
+        echo "}"
 
-    log "Validation passed. Performing atomic swap..."
+        if [ "$update_ipv6" = "1" ]; then
+            echo ""
+            echo "flush set inet filter tracker_ips6"
+            echo "add element inet filter tracker_ips6 {"
+            awk '
+                BEGIN { c = 0; line = "    " }
+                {
+                    line = line (c > 0 ? ", " : "") $0
+                    c++
+                    if (c == 4) {
+                        print line
+                        c = 0
+                        line = "    "
+                    }
+                }
+                END {
+                    if (c > 0) print line
+                }
+            ' "$ipv6_list"
+            echo "}"
+        fi
+    } > "$NFT_BATCH"
 
-    # Apply staged set (creates tracker_ips_staged)
-    nft -f "$staged_file" || die "Failed to apply staged set"
+    log "Validating nft batch update..."
+    nft --check -f "$NFT_BATCH" || die "nft batch validation failed — keeping existing sets"
 
-    # Atomically: flush live set + populate from staged set
-    # This is the only window where protection is reduced — it's microseconds
-    nft flush set inet filter tracker_ips
-    nft get elements inet filter tracker_ips_staged \
-        | grep -oP '[\d.]+(/\d+)?' \
-        | while IFS= read -r ip; do
-            nft add element inet filter tracker_ips "{ $ip }"
-          done
-
-    # Clean up staged set
-    nft delete set inet filter tracker_ips_staged 2>/dev/null || true
-
-    local final_count
-    final_count=$(nft list set inet filter tracker_ips | grep -c '\.' || echo 0)
-    log "Atomic swap complete. Live tracker_ips set now has ~$final_count entries."
+    log "Applying nft batch update atomically..."
+    nft -f "$NFT_BATCH" || die "Failed to apply nft batch"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -202,22 +201,34 @@ main() {
     fi
 
     # Parse and validate IPs
-    local ipv4_parsed="$TMPDIR/ipv4_parsed.txt"
-    parse_firehol_ipv4 "$BLOCKLIST_FILE" > "$ipv4_parsed"
+    parse_firehol_ipv4 "$BLOCKLIST_FILE" > "$IPV4_PARSED"
+    parse_firehol_ipv6 "$BLOCKLIST_FILE" > "$IPV6_PARSED"
 
-    local count
-    count=$(wc -l < "$ipv4_parsed")
-    log "Parsed $count valid IPv4 entries after validation"
+    local ipv4_count ipv6_count
+    ipv4_count=$(wc -l < "$IPV4_PARSED")
+    ipv6_count=$(wc -l < "$IPV6_PARSED")
+    log "Parsed $ipv4_count valid IPv4 entries after validation"
+    log "Parsed $ipv6_count valid IPv6 entries after validation"
 
-    if [ "$count" -lt "$MIN_ENTRIES" ]; then
-        die "Too few valid IPs parsed ($count). Possible upstream issue. Aborting."
+    if [ "$ipv4_count" -lt "$MIN_ENTRIES" ]; then
+        die "Too few valid IPv4 IPs parsed ($ipv4_count). Possible upstream issue. Aborting."
     fi
 
-    # Build staged set files
-    build_staged_sets "$ipv4_parsed"
+    local update_ipv6=0
+    if [ "$ipv6_count" -ge "$MIN_IPV6_ENTRIES" ]; then
+        update_ipv6=1
+        log "IPv6 set update enabled ($ipv6_count entries)"
+    else
+        warn "IPv6 parsed entries too low ($ipv6_count < $MIN_IPV6_ENTRIES). Keeping existing tracker_ips6 unchanged."
+    fi
 
-    # Perform atomic swap into live ruleset
-    atomic_swap "$IPV4_STAGED"
+    # Apply in one nft transaction to avoid protection gaps
+    build_and_apply_batch "$IPV4_PARSED" "$IPV6_PARSED" "$update_ipv6"
+
+    local final_v4 final_v6
+    final_v4=$(nft list set inet filter tracker_ips | grep -c '\.' || echo 0)
+    final_v6=$(nft list set inet filter tracker_ips6 | grep -c ':' || echo 0)
+    log "Update complete. Live tracker_ips entries: ~$final_v4, tracker_ips6 entries: ~$final_v6"
 
     log "=== Privacy Guardian tracker update complete ==="
 }

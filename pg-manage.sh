@@ -8,9 +8,15 @@
 #   status          Show status of all services
 #   logs            Tail live firewall + AdGuard logs
 #   blocked         Show recently blocked domains and IPs
+#   zone-logs [h]   Show zone drop logs (default 24h) for tuning
 #   update          Run tracker + DoH IP updates
 #   reload          Reload nftables ruleset without rebooting
 #   whitelist <domain>   Add a domain to AdGuard Home whitelist
+#   allow-device <ip> <tcp|udp> <port>   Allow one device to use one outbound port
+#   unallow-device <ip> <tcp|udp> <port> Remove one device-specific outbound allow
+#   block-device <ip>   Block all outbound traffic for one device
+#   unblock-device <ip> Remove explicit per-device block
+#   device-rules    Show active per-device firewall overrides
 #   ban <ip>        Manually add an IP to tracker_ips blocklist
 #   unban <ip>      Remove an IP from tracker_ips blocklist
 #   clients         Show connected devices and their IPs
@@ -26,6 +32,18 @@ header() { echo -e "\n${BOLD}${BLUE}── $1 ──${NC}"; }
 ok()     { echo -e "${GREEN}●${NC} $1"; }
 fail()   { echo -e "${RED}●${NC} $1"; }
 warn()   { echo -e "${YELLOW}●${NC} $1"; }
+
+valid_ipv4() {
+    local ip="$1"
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    awk -F. 'NF==4 {for (i=1; i<=4; i++) if ($i<0 || $i>255) exit 1; exit 0} {exit 1}' <<< "$ip"
+}
+
+valid_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] || return 1
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
+}
 
 COMMAND="${1:-help}"
 
@@ -94,6 +112,25 @@ blocked)
         || echo "  Could not reach AdGuard query log API"
     ;;
 
+# ─── ZONE LOGS ───────────────────────────────────────────────────────────────
+zone-logs)
+    HOURS="${2:-24}"
+    [[ "$HOURS" =~ ^[0-9]+$ ]] || { fail "Hours must be a number"; exit 1; }
+
+    header "Zone Drop Logs (last ${HOURS}h)"
+    echo ""
+    echo "  ── Top blocked destinations by zone ──"
+    journalctl -k --since "${HOURS} hours ago" --no-pager 2>/dev/null \
+        | grep -E 'PG-(TRUSTED|IOT|GUEST|ZONE-UNKNOWN)-DROP' \
+        | grep -oP 'PG-[A-Z-]+-DROP:.*DST=\S+.*DPT=\S+' \
+        | sed -E 's/.*(PG-[A-Z-]+-DROP:).*DST=([^ ]+).*DPT=([^ ]+).*/\1 DST=\2 DPT=\3/' \
+        | sort | uniq -c | sort -rn | head -30 \
+        || echo "  No zone drop logs found"
+
+    echo ""
+    echo "  Tip: only allow per-device ports after confirming repeated legitimate drops."
+    ;;
+
 # ─── UPDATE ───────────────────────────────────────────────────────────────────
 update)
     header "Running All Updates"
@@ -119,6 +156,83 @@ reload)
     nft --check -f /etc/nftables.conf || { fail "Ruleset has errors — not applied"; exit 1; }
     nft -f /etc/nftables.conf
     ok "nftables ruleset reloaded"
+    ;;
+
+# ─── ALLOW DEVICE ────────────────────────────────────────────────────────────
+allow-device)
+    IP="${2:-}"
+    PROTO="${3:-}"
+    PORT="${4:-}"
+    [ -n "$IP" ] && [ -n "$PROTO" ] && [ -n "$PORT" ] || { echo "Usage: pg-manage.sh allow-device <ip> <tcp|udp> <port>"; exit 1; }
+    valid_ipv4 "$IP" || { fail "Invalid IPv4: $IP"; exit 1; }
+    valid_port "$PORT" || { fail "Invalid port: $PORT"; exit 1; }
+    [[ "$PROTO" = "tcp" || "$PROTO" = "udp" ]] || { fail "Protocol must be tcp or udp"; exit 1; }
+
+    header "Allow Device Exception"
+    if [ "$PROTO" = "tcp" ]; then
+        nft add element inet filter device_tcp_allow "{ $IP . $PORT }" || { fail "Failed to add TCP allow"; exit 1; }
+    else
+        nft add element inet filter device_udp_allow "{ $IP . $PORT }" || { fail "Failed to add UDP allow"; exit 1; }
+    fi
+
+    ok "Allowed $IP -> $PROTO/$PORT"
+    warn "Runtime change only. Persist by adding the element to the matching set in /etc/nftables.conf"
+    ;;
+
+# ─── UNALLOW DEVICE ──────────────────────────────────────────────────────────
+unallow-device)
+    IP="${2:-}"
+    PROTO="${3:-}"
+    PORT="${4:-}"
+    [ -n "$IP" ] && [ -n "$PROTO" ] && [ -n "$PORT" ] || { echo "Usage: pg-manage.sh unallow-device <ip> <tcp|udp> <port>"; exit 1; }
+    valid_ipv4 "$IP" || { fail "Invalid IPv4: $IP"; exit 1; }
+    valid_port "$PORT" || { fail "Invalid port: $PORT"; exit 1; }
+    [[ "$PROTO" = "tcp" || "$PROTO" = "udp" ]] || { fail "Protocol must be tcp or udp"; exit 1; }
+
+    header "Remove Device Exception"
+    if [ "$PROTO" = "tcp" ]; then
+        nft delete element inet filter device_tcp_allow "{ $IP . $PORT }" || { fail "TCP allow not found"; exit 1; }
+    else
+        nft delete element inet filter device_udp_allow "{ $IP . $PORT }" || { fail "UDP allow not found"; exit 1; }
+    fi
+
+    ok "Removed allow $IP -> $PROTO/$PORT"
+    ;;
+
+# ─── BLOCK DEVICE ────────────────────────────────────────────────────────────
+block-device)
+    IP="${2:-}"
+    [ -n "$IP" ] || { echo "Usage: pg-manage.sh block-device <ip>"; exit 1; }
+    valid_ipv4 "$IP" || { fail "Invalid IPv4: $IP"; exit 1; }
+
+    header "Blocking Device"
+    nft add element inet filter device_block_all "{ $IP }" || { fail "Failed to block $IP"; exit 1; }
+    ok "All outbound traffic blocked for $IP"
+    ;;
+
+# ─── UNBLOCK DEVICE ──────────────────────────────────────────────────────────
+unblock-device)
+    IP="${2:-}"
+    [ -n "$IP" ] || { echo "Usage: pg-manage.sh unblock-device <ip>"; exit 1; }
+    valid_ipv4 "$IP" || { fail "Invalid IPv4: $IP"; exit 1; }
+
+    header "Unblocking Device"
+    nft delete element inet filter device_block_all "{ $IP }" || { fail "Device $IP is not currently blocked"; exit 1; }
+    ok "Removed explicit block for $IP"
+    ;;
+
+# ─── DEVICE RULES ────────────────────────────────────────────────────────────
+device-rules)
+    header "Per-Device Overrides"
+    echo ""
+    echo "  device_block_all:"
+    nft list set inet filter device_block_all 2>/dev/null || echo "  (set missing)"
+    echo ""
+    echo "  device_tcp_allow:"
+    nft list set inet filter device_tcp_allow 2>/dev/null || echo "  (set missing)"
+    echo ""
+    echo "  device_udp_allow:"
+    nft list set inet filter device_udp_allow 2>/dev/null || echo "  (set missing)"
     ;;
 
 # ─── WHITELIST ────────────────────────────────────────────────────────────────
@@ -223,9 +337,15 @@ help|*)
     printf "  %-28s %s\n" "status"              "Show all service and stats status"
     printf "  %-28s %s\n" "logs"                "Tail live firewall + AdGuard logs"
     printf "  %-28s %s\n" "blocked"             "Show recently blocked domains and IPs"
+    printf "  %-28s %s\n" "zone-logs [hours]"   "Show zone drop logs for tuning"
     printf "  %-28s %s\n" "update"              "Run all updates (trackers, packages)"
     printf "  %-28s %s\n" "reload"              "Reload nftables without rebooting"
     printf "  %-28s %s\n" "whitelist <domain>"  "Whitelist a domain in AdGuard Home"
+    printf "  %-28s %s\n" "allow-device <ip> <proto> <port>"   "Add one per-device outbound allow"
+    printf "  %-28s %s\n" "unallow-device <ip> <proto> <port>" "Remove one per-device outbound allow"
+    printf "  %-28s %s\n" "block-device <ip>"   "Block all outbound traffic for one device"
+    printf "  %-28s %s\n" "unblock-device <ip>" "Remove per-device outbound block"
+    printf "  %-28s %s\n" "device-rules"        "Show active per-device firewall overrides"
     printf "  %-28s %s\n" "ban <ip>"            "Block an IP immediately"
     printf "  %-28s %s\n" "unban <ip>"          "Unblock an IP"
     printf "  %-28s %s\n" "clients"             "List connected devices"

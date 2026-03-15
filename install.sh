@@ -65,6 +65,7 @@ if [ -z "$MGMT_IP" ]; then
     read -rp "  Enter management device IP (will have SSH + AdGuard UI access): " MGMT_IP
     echo ""
     [[ "$MGMT_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || die "Invalid IP: $MGMT_IP"
+    awk -F. 'NF==4 {for (i=1; i<=4; i++) if ($i<0 || $i>255) exit 1; exit 0} {exit 1}' <<< "$MGMT_IP" || die "Invalid IP octet range: $MGMT_IP"
 fi
 
 log "SSID: $WIFI_SSID"

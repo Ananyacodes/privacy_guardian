@@ -101,6 +101,48 @@ nft list chain inet filter privacy_chain 2>/dev/null | grep -q "dport 853.*drop"
     && green "DoT blocking rule active (port 853)" \
     || red "DoT blocking missing"
 
+header "Zone-Based Filtering"
+
+nft list set inet filter zone_trusted_clients &>/dev/null \
+    && green "Trusted zone set exists" \
+    || red "Trusted zone set missing"
+
+nft list set inet filter zone_iot_clients &>/dev/null \
+    && green "IoT zone set exists" \
+    || red "IoT zone set missing"
+
+nft list set inet filter zone_guest_clients &>/dev/null \
+    && green "Guest zone set exists" \
+    || red "Guest zone set missing"
+
+nft list chain inet filter zone_trusted_egress &>/dev/null \
+    && green "Trusted egress chain exists" \
+    || red "Trusted egress chain missing"
+
+nft list chain inet filter zone_iot_egress &>/dev/null \
+    && green "IoT egress chain exists" \
+    || red "IoT egress chain missing"
+
+nft list chain inet filter zone_guest_egress &>/dev/null \
+    && green "Guest egress chain exists" \
+    || red "Guest egress chain missing"
+
+nft list chain inet filter privacy_chain 2>/dev/null | grep -q "PG-ZONE-UNKNOWN-DROP" \
+    && green "Unknown devices are denied by default" \
+    || red "Unknown-zone default deny missing"
+
+nft list set inet filter device_tcp_allow &>/dev/null \
+    && green "Per-device TCP allow set exists" \
+    || red "Per-device TCP allow set missing"
+
+nft list set inet filter device_udp_allow &>/dev/null \
+    && green "Per-device UDP allow set exists" \
+    || red "Per-device UDP allow set missing"
+
+nft list set inet filter device_block_all &>/dev/null \
+    && green "Per-device block set exists" \
+    || red "Per-device block set missing"
+
 header "IPv6 Status"
 
 IPV6_DISABLED=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "unknown")
@@ -120,9 +162,11 @@ journalctl -k --since "1 hour ago" 2>/dev/null | grep -q "PG-" \
 
 header "Cron Jobs"
 
-crontab -l 2>/dev/null | grep -q "update-trackers" \
-    && green "Tracker update cron job configured" \
-    || yellow "No update-trackers.sh cron job found — tracker IPs won't auto-update"
+if grep -q "update-trackers\.sh" /etc/cron.d/privacy-guardian 2>/dev/null; then
+    green "Tracker update cron job configured (/etc/cron.d/privacy-guardian)"
+else
+    yellow "No update-trackers.sh cron job found in /etc/cron.d/privacy-guardian"
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
