@@ -1,0 +1,76 @@
+{
+  "generated_at": "2026-03-29T00:00:00Z",
+  "dashboard": {
+    "internet": {
+      "up": true,
+      "wan_ip": "10.0.0.28"
+    },
+    "security": {
+      "firewall_active": true,
+      "adguard_active": true,
+      "hostapd_active": true,
+      "zone_protection": "strict"
+    },
+    "counts": {
+      "total_devices": 5,
+      "iot": 2,
+      "personal": 2,
+      "public": 1,
+      "unknown": 0
+    }
+  },
+  "wifi_setup_steps": [
+    "Open router/AP settings and set SSID for your Privacy Guardian LAN.",
+    "Select WPA2 or WPA3 mode and set a strong passphrase.",
+    "Bind DHCP scope to LAN subnet and reserve IPs for trusted devices.",
+    "Set DNS to local resolver (AdGuard on router) and block external DNS bypass.",
+    "Save, reboot AP services, then verify internet and DNS leak tests."
+  ],
+  "devices": [
+    {
+      "ip": "192.168.4.12",
+      "hostname": "livingroom-tv",
+      "category": "iot",
+      "type_hint": "TV",
+      "ssh_reachable": false,
+      "active_flows": 11,
+      "estimated_bytes": 343992
+    },
+    {
+      "ip": "192.168.4.18",
+      "hostname": "kitchen-fridge",
+      "category": "iot",
+      "type_hint": "Fridge",
+      "ssh_reachable": false,
+      "active_flows": 4,
+      "estimated_bytes": 95120
+    },
+    {
+      "ip": "192.168.4.21",
+      "hostname": "ananya-phone",
+      "category": "personal",
+      "type_hint": "Phone",
+      "ssh_reachable": false,
+      "active_flows": 17,
+      "estimated_bytes": 744811
+    },
+    {
+      "ip": "192.168.4.27",
+      "hostname": "work-laptop",
+      "category": "personal",
+      "type_hint": "Laptop",
+      "ssh_reachable": false,
+      "active_flows": 29,
+      "estimated_bytes": 1998120
+    },
+    {
+      "ip": "192.168.4.40",
+      "hostname": "home-server",
+      "category": "public",
+      "type_hint": "Server",
+      "ssh_reachable": true,
+      "active_flows": 39,
+      "estimated_bytes": 6542109
+    }
+  ]
+}
