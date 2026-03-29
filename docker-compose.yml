@@ -1,0 +1,164 @@
+version: "3.8"
+
+# Privacy Guardian v3.0 — Containerized Router Stack
+# Complete privacy router running on Docker
+#
+# Usage:
+#   docker compose up -d        # Start all services
+#   docker compose down         # Stop all services
+#   docker compose logs -f      # View logs
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # ADGUARD HOME — DNS Filtering & Blocking
+  # ─────────────────────────────────────────────────────────────────────────
+  pg-adguard:
+    image: adguard/adguardhome:latest
+    container_name: pg-adguard
+    hostname: privacy-guardian-adguard
+
+    # Port mappings
+    ports:
+      - "3000:3000/tcp" # Admin UI
+      - "53:53/tcp" # DNS (TCP)
+      - "53:53/udp" # DNS (UDP)
+
+    # Volumes for persistent configuration
+    volumes:
+      - adguard-work:/opt/adguardhome/work
+      - adguard-conf:/opt/adguardhome/conf
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Resource limits for Pi
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/login.html"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Optional: Set environment variables
+    environment:
+      - TZ=UTC
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # DNSMASQ — DHCP Server
+  # ─────────────────────────────────────────────────────────────────────────
+  pg-dnsmasq:
+    build:
+      context: .
+      dockerfile: Dockerfile.dnsmasq
+    container_name: pg-dnsmasq
+    hostname: privacy-guardian-dnsmasq
+
+    # Use host networking for DHCP to work properly
+    network_mode: host
+
+    # Volumes for configuration
+    volumes:
+      - ./dnsmasq.conf:/etc/dnsmasq.conf:ro
+      - dnsmasq-leases:/var/lib/misc
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Capabilities needed for DHCP
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Run as root for network operations
+    user: root
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # FIREWALL — NFtables Rules & IP Forwarding
+  # ─────────────────────────────────────────────────────────────────────────
+  pg-firewall:
+    build:
+      context: .
+      dockerfile: Dockerfile.firewall
+    container_name: pg-firewall
+    hostname: privacy-guardian-firewall
+
+    # Use host networking to apply firewall rules to host
+    network_mode: host
+
+    # Volumes for configuration
+    volumes:
+      - ./nftables.conf:/etc/nftables.conf:ro
+      - firewall-logs:/var/log
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Required capabilities for nftables and IP forwarding
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+
+    # Run with elevated privileges for network rules
+    user: root
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # HOSTAPD — Wi-Fi Access Point (Optional)
+  # ─────────────────────────────────────────────────────────────────────────
+  pg-hostapd:
+    build:
+      context: .
+      dockerfile: Dockerfile.hostapd
+    container_name: pg-hostapd
+    hostname: privacy-guardian-hostapd
+
+    # Use host networking to manage wlan0
+    network_mode: host
+
+    # Volumes for configuration
+    volumes:
+      - ./hostapd.conf:/etc/hostapd/hostapd.conf:ro
+      - hostapd-logs:/var/log
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Required capabilities for Wi-Fi
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Run as root
+    user: root
+
+    # Keep container running
+    stdin_open: true
+    tty: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Volumes for persistent data
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  adguard-work:
+    driver: local
+  adguard-conf:
+    driver: local
+  dnsmasq-leases:
+    driver: local
+  firewall-logs:
+    driver: local
+  hostapd-logs:
+    driver: local
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Networks (optional — uncomment if using custom Docker network)
+# ─────────────────────────────────────────────────────────────────────────────
+# networks:
+#   pg-network:
+#     driver: bridge
+#     ipam:
+#       config:
+#         - subnet: 172.28.0.0/16

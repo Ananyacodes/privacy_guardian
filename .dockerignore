@@ -1,0 +1,44 @@
+# .dockerignore
+# Files to exclude from Docker build context
+
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Docker files
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Documentation
+README.md
+README_DOCKER.md
+*.md
+
+# Tools and scripts (only needed outside container)
+pg-test.sh
+pg-manage.sh
+disable-ipv6.sh
+update-trackers.sh
+update-doh-ips.sh
+install.sh
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Node modules and npm (if any)
+node_modules/
+npm-debug.log
+
+# Python cache (if any)
+__pycache__/
+*.pyc

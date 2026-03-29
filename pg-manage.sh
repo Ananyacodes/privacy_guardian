@@ -1,21 +1,25 @@
 #!/bin/bash
-# pg-manage.sh — Privacy Guardian v2.1 Management CLI
-# A single tool for all ongoing maintenance tasks
+# pg-manage.sh — Privacy Guardian v3.0 Management CLI (Docker)
+# A single tool for all ongoing maintenance tasks in containerized environment
 #
 # Usage: sudo pg-manage.sh <command>
 #
 # Commands:
-#   status          Show status of all services
-#   logs            Tail live firewall + AdGuard logs
+#   status          Show status of all containers
+#   logs            Tail live logs from containers
 #   blocked         Show recently blocked domains and IPs
-#   update          Run tracker + DoH IP updates
-#   reload          Reload nftables ruleset without rebooting
+#   update          Run container image updates
+#   reload          Reload n ftables ruleset without rebooting
 #   whitelist <domain>   Add a domain to AdGuard Home whitelist
 #   ban <ip>        Manually add an IP to tracker_ips blocklist
 #   unban <ip>      Remove an IP from tracker_ips blocklist
 #   clients         Show connected devices and their IPs
 #   backup          Backup all config files
 #   restore <file>  Restore configs from backup
+#   start           Start all containers
+#   stop            Stop all containers
+#   restart         Restart all containers
+#   pull            Pull latest container images
 
 set -uo pipefail
 
@@ -26,98 +30,122 @@ header() { echo -e "\n${BOLD}${BLUE}── $1 ──${NC}"; }
 ok()     { echo -e "${GREEN}●${NC} $1"; }
 fail()   { echo -e "${RED}●${NC} $1"; }
 warn()   { echo -e "${YELLOW}●${NC} $1"; }
+info()   { echo -e "${BLUE}[→]${NC} $1"; }
 
 COMMAND="${1:-help}"
+
+# Detect project directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$SCRIPT_DIR"
+
+# Check if we're in the right directory
+if [ ! -f "$PROJECT_DIR/docker-compose.yml" ]; then
+    fail "docker-compose.yml not found in $PROJECT_DIR"
+    fail "Please run this script from the Privacy Guardian project root directory"
+    exit 1
+fi
 
 case "$COMMAND" in
 
 # ─── STATUS ──────────────────────────────────────────────────────────────────
 status)
-    header "Privacy Guardian v2.1 — Service Status"
+    header "Privacy Guardian v3.0 — Container Status"
 
-    for svc in hostapd dnsmasq nftables AdGuardHome fail2ban; do
-        if systemctl is-active --quiet "$svc" 2>/dev/null; then
-            ok "$svc: running"
-        else
-            fail "$svc: STOPPED"
-        fi
-    done
+    info "Checking Docker daemon..."
+    docker ps -q > /dev/null 2>&1 || { fail "Docker daemon not running"; exit 1; }
+
+    ok "Docker daemon is running"
+
+    header "Containers"
+    printf "  %-20s %-15s %-10s %s\n" "Container" "Image" "Status" "Ports"
+    printf "  %-20s %-15s %-10s %s\n" "─────────" "─────" "──────" "─────"
+
+    docker compose ps --format "table {{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" | tail -n +2 2>/dev/null || true
 
     header "Network"
     echo "  Pi IP (wlan0): $(ip -4 addr show wlan0 2>/dev/null | grep -oP '(?<=inet )\S+' || echo 'not configured')"
     echo "  WAN IP (eth0): $(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet )\S+' || echo 'not configured')"
-    echo "  Connected devices: $(cat /var/lib/misc/dnsmasq.leases 2>/dev/null | wc -l) active DHCP leases"
 
-    header "Firewall"
-    echo "  tracker_ips entries: $(nft list set inet filter tracker_ips 2>/dev/null | grep -c '\.' || echo 0)"
-    echo "  Active connections: $(nft list ruleset 2>/dev/null | grep -c 'ct state established' || echo 'unknown')"
+    header "DHCP Leases"
+    LEASE_COUNT=$(docker compose exec -T pg-dnsmasq wc -l < /var/lib/misc/dnsmasq.leases 2>/dev/null || echo 'unknown')
+    echo "  Active leases: $LEASE_COUNT"
 
-    header "AdGuard Home (last 24h)"
-    # Query AdGuard Home stats API
-    STATS=$(curl -sf --max-time 3 http://127.0.0.1:3000/control/stats 2>/dev/null || echo '{}')
-    if [ "$STATS" != '{}' ]; then
-        echo "  DNS queries:   $(echo "$STATS" | grep -oP '"num_dns_queries":\K[0-9]+'  || echo 'N/A')"
-        echo "  Blocked:       $(echo "$STATS" | grep -oP '"num_blocked_filtering":\K[0-9]+' || echo 'N/A')"
-        echo "  Block rate:    $(echo "$STATS" | grep -oP '"num_replaced_safebrowsing":\K[0-9]+' || echo 'N/A')"
+    header "AdGuard Home"
+    if docker compose exec -T pg-adguard curl -sf http://localhost:3000/login.html > /dev/null 2>&1; then
+        ok "AdGuard Home is responsive"
+        
+        # Query stats API
+        STATS=$(docker compose exec -T pg-adguard curl -sf http://localhost:3000/control/stats 2>/dev/null || echo '{}')
+        if [ "$STATS" != '{}' ]; then
+            DNS_QUERIES=$(echo "$STATS" | grep -oP '"num_dns_queries":\K[0-9]+' || echo 'N/A')
+            BLOCKED=$(echo "$STATS" | grep -oP '"num_blocked_filtering":\K[0-9]+' || echo 'N/A')
+            echo "  DNS queries: $DNS_QUERIES"
+            echo "  Blocked: $BLOCKED"
+        fi
     else
-        warn "AdGuard stats API not reachable"
+        warn "AdGuard Home is not responding"
+    fi
+
+    header "Firewall (nftables)"
+    if docker compose exec -T pg-firewall nft list ruleset > /dev/null 2>&1; then
+        ok "nftables ruleset is loaded"
+        TRACKER_COUNT=$(docker compose exec -T pg-firewall nft list set inet filter tracker_ips 2>/dev/null | grep -c '\.' || echo 0)
+        echo "  Tracker IPs blocked: $TRACKER_COUNT"
+    else
+        warn "nftables check failed"
     fi
     ;;
 
 # ─── LOGS ────────────────────────────────────────────────────────────────────
 logs)
-    header "Live Logs (Ctrl+C to stop)"
-    journalctl -f -k --grep="PG-" \
-        & journalctl -f -u AdGuardHome \
-        & journalctl -f -u hostapd \
-        & wait
+    header "Container Logs (Ctrl+C to stop)"
+    docker compose logs -f
     ;;
 
 # ─── BLOCKED ─────────────────────────────────────────────────────────────────
 blocked)
-    header "Recently Blocked (last 100 entries)"
+    header "Recently Blocked (last 24 hours)"
     echo ""
-    echo "  ── Firewall drops (nftables) ──"
-    journalctl -k --since "24 hours ago" --grep="PG-" --no-pager 2>/dev/null \
-        | grep -oP 'PG-\S+.*DST=\S+' \
+    echo "  ── DNS blocks (AdGuard query log) ──"
+    
+    docker compose exec -T pg-adguard curl -sf "http://localhost:3000/control/querylog?limit=100" 2>/dev/null \
+        | grep -oP '"question":{"name":"\K[^"]+' \
         | sort | uniq -c | sort -rn \
         | head -20 \
-        || echo "  No firewall drops logged"
-
+        || warn "Could not reach AdGuard query log API"
+    
     echo ""
-    echo "  ── DNS blocks (AdGuard — query log) ──"
-    # AdGuard Home query log via API
-    curl -sf --max-time 5 "http://127.0.0.1:3000/control/querylog?limit=50" 2>/dev/null \
-        | grep -oP '"question":{"name":"\K[^"]+(?=".*"status":"Filtered")' \
-        | sort | uniq -c | sort -rn \
-        | head -20 \
-        || echo "  Could not reach AdGuard query log API"
+    echo "  ── Firewall blocks ──"
+    docker compose exec -T pg-firewall nft list ruleset 2>/dev/null \
+        | grep -i "drop\|reject" \
+        | head -10 \
+        || warn "Could not read firewall rules"
     ;;
 
 # ─── UPDATE ───────────────────────────────────────────────────────────────────
 update)
-    header "Running All Updates"
+    header "Running Container Updates"
     echo ""
-    info() { echo -e "${BLUE}[→]${NC} $1"; }
 
-    info "Updating tracker IP blocklist..."
-    /usr/local/bin/update-trackers.sh
+    info "Pulling latest container images..."
+    docker compose pull
 
-    info "Checking DoH resolver IPs for changes..."
-    /usr/local/bin/update-doh-ips.sh
+    info "Reloading firewall rules..."
+    docker compose exec -T pg-firewall nft -f /etc/nftables.conf || warn "Failed to reload firewall"
 
-    info "Updating system packages..."
-    apt-get update -qq && apt-get upgrade -y -qq
-
-    echo ""
-    ok "All updates complete"
+    ok "Updates complete"
     ;;
 
 # ─── RELOAD ──────────────────────────────────────────────────────────────────
 reload)
     header "Reloading nftables Ruleset"
-    nft --check -f /etc/nftables.conf || { fail "Ruleset has errors — not applied"; exit 1; }
-    nft -f /etc/nftables.conf
+    
+    if docker compose exec -T pg-firewall nft --check -f /etc/nftables.conf 2>&1 | grep -q error; then
+        fail "Ruleset has errors — not applied"
+        exit 1
+    fi
+
+    docker compose exec -T pg-firewall nft -f /etc/nftables.conf || { fail "Failed to reload ruleset"; exit 1; }
     ok "nftables ruleset reloaded"
     ;;
 
@@ -125,35 +153,51 @@ reload)
 whitelist)
     DOMAIN="${2:-}"
     [ -z "$DOMAIN" ] && { echo "Usage: pg-manage.sh whitelist <domain>"; exit 1; }
+    
     header "Whitelisting: $DOMAIN"
-    # Add to AdGuard Home via API
-    RESULT=$(curl -sf --max-time 5 \
+    
+    RESULT=$(docker compose exec -T pg-adguard curl -sf --max-time 5 \
         -X POST "http://127.0.0.1:3000/control/filtering/add_url" \
         -H "Content-Type: application/json" \
         -d "{\"name\":\"Manual whitelist\",\"url\":\"@@||${DOMAIN}^\"}" \
         2>/dev/null)
-    ok "Domain '$DOMAIN' added to AdGuard whitelist"
-    echo "  Verify in AdGuard Home UI → Filters → Custom Filtering Rules"
+    
+    if [ -n "$RESULT" ]; then
+        ok "Domain '$DOMAIN' added to AdGuard whitelist"
+    else
+        warn "Could not add domain (verify AdGuard is running)"
+    fi
     ;;
 
 # ─── BAN ─────────────────────────────────────────────────────────────────────
 ban)
     IP="${2:-}"
     [ -z "$IP" ] && { echo "Usage: pg-manage.sh ban <ip>"; exit 1; }
+    
     header "Banning IP: $IP"
-    nft add element inet filter tracker_ips "{ $IP }" || { fail "Failed to add $IP"; exit 1; }
-    ok "IP $IP added to tracker_ips blocklist (active immediately)"
-    warn "This is temporary — survives until next tracker update or reboot"
-    warn "To make permanent: add to /etc/nftables.conf tracker_ips set"
+    
+    if docker compose exec -T pg-firewall nft add element inet filter tracker_ips "{ $IP }" 2>&1; then
+        ok "IP $IP added to tracker_ips blocklist (active immediately)"
+        warn "This is temporary — survives until firewall reload or container restart"
+    else
+        fail "Failed to add $IP to blocklist"
+        exit 1
+    fi
     ;;
 
 # ─── UNBAN ───────────────────────────────────────────────────────────────────
 unban)
     IP="${2:-}"
     [ -z "$IP" ] && { echo "Usage: pg-manage.sh unban <ip>"; exit 1; }
+    
     header "Removing IP from blocklist: $IP"
-    nft delete element inet filter tracker_ips "{ $IP }" || { fail "IP $IP not found in tracker_ips"; exit 1; }
-    ok "IP $IP removed from tracker_ips"
+    
+    if docker compose exec -T pg-firewall nft delete element inet filter tracker_ips "{ $IP }" 2>&1; then
+        ok "IP $IP removed from tracker_ips"
+    else
+        fail "IP $IP not found in tracker_ips or error occurred"
+        exit 1
+    fi
     ;;
 
 # ─── CLIENTS ─────────────────────────────────────────────────────────────────
@@ -162,37 +206,42 @@ clients)
     echo ""
     printf "  %-18s %-20s %-20s %s\n" "IP Address" "MAC Address" "Hostname" "Lease Expires"
     printf "  %-18s %-20s %-20s %s\n" "──────────" "───────────" "────────" "─────────────"
-    while IFS=' ' read -r expiry mac ip hostname _; do
+    
+    docker compose exec -T pg-dnsmasq cat /var/lib/misc/dnsmasq.leases 2>/dev/null | while IFS=' ' read -r expiry mac ip hostname _; do
         if [ "$expiry" = "0" ]; then
             expires="static"
         else
             expires=$(date -d "@$expiry" '+%H:%M %d/%m' 2>/dev/null || echo "unknown")
         fi
         printf "  %-18s %-20s %-20s %s\n" "$ip" "$mac" "$hostname" "$expires"
-    done < /var/lib/misc/dnsmasq.leases 2>/dev/null || echo "  No DHCP leases found"
+    done || warn "No DHCP leases found"
     ;;
 
 # ─── BACKUP ──────────────────────────────────────────────────────────────────
 backup)
-    BACKUP_DIR="/var/backups/privacy-guardian"
-    BACKUP_FILE="$BACKUP_DIR/pg-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+    BACKUP_DIR="$PROJECT_DIR/backups"
     mkdir -p "$BACKUP_DIR"
+    BACKUP_FILE="$BACKUP_DIR/pg-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
 
     header "Backing Up Configuration"
+    
     tar -czf "$BACKUP_FILE" \
-        /etc/nftables.conf \
-        /etc/hostapd/hostapd.conf \
-        /etc/dnsmasq.conf \
-        /etc/dhcpcd.conf \
-        /etc/sysctl.d/99-privacy-guardian.conf \
-        /opt/AdGuardHome/AdGuardHome.yaml \
-        /etc/fail2ban/jail.d/privacy-guardian.conf \
-        /usr/local/bin/update-trackers.sh \
-        /usr/local/bin/pg-test.sh \
-        2>/dev/null
+        "$PROJECT_DIR/nftables.conf" \
+        "$PROJECT_DIR/hostapd.conf" \
+        "$PROJECT_DIR/dnsmasq.conf" \
+        "$PROJECT_DIR/docker-compose.yml" \
+        "$PROJECT_DIR/.env" \
+        "$PROJECT_DIR/Dockerfile."* \
+        "$PROJECT_DIR/scripts/" \
+        2>/dev/null || true
 
-    ok "Backup saved: $BACKUP_FILE"
-    echo "  Size: $(du -h "$BACKUP_FILE" | cut -f1)"
+    if [ -f "$BACKUP_FILE" ]; then
+        ok "Backup saved: $BACKUP_FILE"
+        echo "  Size: $(du -h "$BACKUP_FILE" | cut -f1)"
+    else
+        fail "Backup failed"
+        exit 1
+    fi
     ;;
 
 # ─── RESTORE ─────────────────────────────────────────────────────────────────
@@ -206,31 +255,67 @@ restore)
     read -r confirm
     [ "$confirm" = "y" ] || { echo "Aborted."; exit 0; }
 
-    tar -xzf "$BACKUP_FILE" -C / 2>/dev/null
-    nft -f /etc/nftables.conf
-    systemctl restart hostapd dnsmasq AdGuardHome nftables
-    ok "Restore complete. Services restarted."
+    tar -xzf "$BACKUP_FILE" -C "$PROJECT_DIR" 2>/dev/null || true
+    docker compose restart
+    ok "Restore complete. Containers restarted."
+    ;;
+
+# ─── START ───────────────────────────────────────────────────────────────────
+start)
+    header "Starting Privacy Guardian Containers"
+    docker compose up -d
+    ok "Containers started"
+    ;;
+
+# ─── STOP ────────────────────────────────────────────────────────────────────
+stop)
+    header "Stopping Privacy Guardian Containers"
+    docker compose down
+    ok "Containers stopped"
+    ;;
+
+# ─── RESTART ─────────────────────────────────────────────────────────────────
+restart)
+    header "Restarting Privacy Guardian Containers"
+    docker compose restart
+    ok "Containers restarted"
+    ;;
+
+# ─── PULL ────────────────────────────────────────────────────────────────────
+pull)
+    header "Pulling Latest Container Images"
+    docker compose pull
+    ok "Latest images pulled"
+    info "Run 'pg-manage.sh restart' to apply updates"
     ;;
 
 # ─── HELP ────────────────────────────────────────────────────────────────────
 help|*)
     echo ""
-    echo -e "${BOLD}Privacy Guardian v2.1 — Management CLI${NC}"
+    echo -e "${BOLD}Privacy Guardian v3.0 — Management CLI (Docker)${NC}"
     echo ""
     echo "Usage: sudo pg-manage.sh <command> [args]"
     echo ""
-    echo "Commands:"
-    printf "  %-28s %s\n" "status"              "Show all service and stats status"
-    printf "  %-28s %s\n" "logs"                "Tail live firewall + AdGuard logs"
-    printf "  %-28s %s\n" "blocked"             "Show recently blocked domains and IPs"
-    printf "  %-28s %s\n" "update"              "Run all updates (trackers, packages)"
-    printf "  %-28s %s\n" "reload"              "Reload nftables without rebooting"
-    printf "  %-28s %s\n" "whitelist <domain>"  "Whitelist a domain in AdGuard Home"
-    printf "  %-28s %s\n" "ban <ip>"            "Block an IP immediately"
-    printf "  %-28s %s\n" "unban <ip>"          "Unblock an IP"
-    printf "  %-28s %s\n" "clients"             "List connected devices"
-    printf "  %-28s %s\n" "backup"              "Backup all config files"
-    printf "  %-28s %s\n" "restore <file>"      "Restore from backup"
+    echo "Container Management:"
+    printf "  %-28s %s\n" "start"              "Start all containers"
+    printf "  %-28s %s\n" "stop"               "Stop all containers"
+    printf "  %-28s %s\n" "restart"            "Restart all containers"
+    printf "  %-28s %s\n" "status"             "Show container and service status"
+    printf "  %-28s %s\n" "logs"               "View all container logs"
+    printf "  %-28s %s\n" "pull"               "Pull latest container images"
+    echo ""
+    echo "Operations:"
+    printf "  %-28s %s\n" "blocked"            "Show recently blocked domains/IPs"
+    printf "  %-28s %s\n" "update"             "Update container images"
+    printf "  %-28s %s\n" "reload"             "Reload nftables without restart"
+    printf "  %-28s %s\n" "whitelist <domain>" "Whitelist a domain"
+    printf "  %-28s %s\n" "ban <ip>"           "Block an IP immediately"
+    printf "  %-28s %s\n" "unban <ip>"         "Unblock an IP"
+    printf "  %-28s %s\n" "clients"            "List connected devices"
+    echo ""
+    echo "Backup & Restore:"
+    printf "  %-28s %s\n" "backup"             "Backup all configuration"
+    printf "  %-28s %s\n" "restore <file>"    "Restore from backup file"
     echo ""
     ;;
 esac

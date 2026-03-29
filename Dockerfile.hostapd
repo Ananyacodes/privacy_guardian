@@ -1,0 +1,32 @@
+# Dockerfile.hostapd
+# Privacy Guardian WiFi Access Point Container
+# Runs hostapd for Wi-Fi access point
+
+FROM debian:bookworm-slim
+
+LABEL maintainer="Privacy Guardian"
+LABEL description="Privacy Guardian WiFi - hostapd access point"
+
+# Install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    hostapd \
+    iproute2 \
+    wireless-tools \
+    wpasupplicant \
+    curl \
+    ca-certificates \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create necessary directories
+RUN mkdir -p /etc/hostapd /var/log/privacy-guardian /var/run/hostapd
+
+# Copy entrypoint
+COPY scripts/hostapd-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Health check — verify hostapd is responding
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD ps aux | grep -q "[h]ostapd" || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

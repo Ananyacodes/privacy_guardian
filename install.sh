@@ -1,5 +1,15 @@
 #!/bin/bash
-# install.sh — Privacy Guardian v2.1 Full Installer
+# install.sh — Privacy Guardian v2.1 Full Installer (DEPRECATED)
+#
+# ⚠️  DEPRECATED: This is the old host-based installer for v2.1
+#     Privacy Guardian v3.0+ uses Docker for safe containerized deployment
+#
+# ✓ Recommended: Use Privacy Guardian v3.0 (Docker)
+#   See: README_DOCKER.md or run: docker compose up -d
+#
+# ⚠️  This script modifies your host OS system files and cannot be easily uninstalled
+#
+# If you choose to use v2.1:
 # Run as root on a fresh Raspberry Pi OS Lite (Bookworm 64-bit recommended)
 # Installs and configures: hostapd, dnsmasq, AdGuard Home, nftables, sysctl hardening
 #
@@ -8,6 +18,8 @@
 #   sudo ./install.sh
 #
 # Time to complete: ~5 minutes (depending on internet speed)
+#
+# For migration from v2.1 to v3.0, see: MIGRATION.md
 
 set -euo pipefail
 
