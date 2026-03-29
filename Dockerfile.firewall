@@ -1,0 +1,40 @@
+# Dockerfile.firewall
+# Privacy Guardian Firewall Container
+# Runs nftables and applies firewall rules
+
+FROM debian:bookworm-slim
+
+LABEL maintainer="Privacy Guardian"
+LABEL description="Privacy Guardian Firewall - nftables rules and IP forwarding"
+
+# Install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nftables \
+    iproute2 \
+    curl \
+    wget \
+    ca-certificates \
+    dnsutils \
+    tcpdump \
+    netcat-openbsd \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy configuration files
+COPY nftables.conf /etc/nftables.conf
+COPY scripts/firewall-entrypoint.sh /entrypoint.sh
+
+# Make entrypoint executable
+RUN chmod +x /entrypoint.sh
+
+# Create log directory
+RUN mkdir -p /var/log/privacy-guardian
+
+# Disable IPv6 loopback binding (if needed)
+# Can be controlled via environment variable
+
+# Health check — verify nftables is running
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD nft list ruleset > /dev/null 2>&1 || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]

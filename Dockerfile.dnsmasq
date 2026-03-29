@@ -1,0 +1,30 @@
+# Dockerfile.dnsmasq
+# Privacy Guardian DHCP Container
+# Runs dnsmasq for DHCP server
+
+FROM debian:bookworm-slim
+
+LABEL maintainer="Privacy Guardian"
+LABEL description="Privacy Guardian DHCP - dnsmasq DHCP server"
+
+# Install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dnsmasq \
+    iproute2 \
+    curl \
+    ca-certificates \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create necessary directories
+RUN mkdir -p /var/lib/misc /var/log/privacy-guardian
+
+# Copy entrypoint
+COPY scripts/dnsmasq-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Health check — verify dnsmasq is responding
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD ps aux | grep -q "[d]nsmasq" || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
