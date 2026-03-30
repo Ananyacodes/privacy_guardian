@@ -17,8 +17,12 @@ services:
     container_name: pg-adguard
     hostname: privacy-guardian-adguard
 
-    # Port mappings
+    # Use host networking for direct interface binding
+    network_mode: host
+
+    # Port mappings are ignored in host mode but shown for reference
     ports:
+      - "80:80"
       - "3000:3000/tcp" # Admin UI
       - "53:53/tcp" # DNS (TCP)
       - "53:53/udp" # DNS (UDP)
@@ -113,30 +117,16 @@ services:
       context: .
       dockerfile: Dockerfile.hostapd
     container_name: pg-hostapd
-    hostname: privacy-guardian-hostapd
-
-    # Use host networking to manage wlan0
-    network_mode: host
-
-    # Volumes for configuration
-    volumes:
-      - ./hostapd.conf:/etc/hostapd/hostapd.conf:ro
-      - hostapd-logs:/var/log
-
-    # Restart policy
     restart: unless-stopped
-
-    # Required capabilities for Wi-Fi
+    network_mode: host
+    privileged: true
     cap_add:
       - NET_ADMIN
       - NET_RAW
-
-    # Run as root
-    user: root
-
-    # Keep container running
-    stdin_open: true
-    tty: true
+    volumes:
+      - ./hostapd.conf:/etc/hostapd/hostapd.conf
+    depends_on:
+      - pg-firewall
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Volumes for persistent data

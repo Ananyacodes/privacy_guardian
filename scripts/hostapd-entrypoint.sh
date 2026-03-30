@@ -31,6 +31,9 @@ echo "[✓] wlan0 interface found"
 
 # ─── Bring up interface ─────────────────────────────────────────────────────
 echo "[*] Bringing up wlan0 interface..."
+# Ensure wlan0 is in AP mode (required for hostapd to start)
+ip link set wlan0 down || true
+iw dev wlan0 set type __ap || true
 ip link set wlan0 up || true
 
 # ─── Ensure hostapd directories exist ──────────────────────────────────────
