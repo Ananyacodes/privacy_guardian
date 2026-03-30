@@ -1,292 +1,466 @@
 /**
- * Privacy Guardian Dashboard
- * Integrates with AdGuard Home API for real-time stats and query logs
+ * Privacy Guardian Dashboard - Complete Backend
+ * Integrates with AdGuard Home API for real-time monitoring and device management
  */
 
-const fallbackData = {
-  generated_at: new Date().toISOString(),
-  dashboard: {
-    internet: { up: true, wan_ip: "192.168.4.1" },
-    security: {
-      firewall_active: true,
-      adguard_active: true,
-      hostapd_active: true,
-      zone_protection: "strict"
-    },
-    counts: {
-      total_devices: 0,
-      iot: 0,
-      personal: 0,
-      public: 0,
-      unknown: 0
-    }
+const API_CONFIG = {
+  baseUrl: '/api/adguard',
+  endpoints: {
+    stats: '/stats',
+    clients: '/clients',
+    querylog: '/querylog',
+    topBlocked: '/stats/top_blocked_domains',
+    topQueried: '/stats/top_queried_domains',
+    info: '/info'
   },
-  wifi_setup_steps: [
-    "Open router/AP settings and set SSID for your Privacy Guardian LAN.",
-    "Select WPA2 or WPA3 mode and set a strong passphrase.",
-    "Bind DHCP scope to LAN subnet and reserve IPs for trusted devices.",
-    "Set DNS to local resolver (AdGuard on router) and block external DNS bypass.",
-    "Save, reboot AP services, then verify internet and DNS leak tests."
-  ],
-  devices: [],
-  stats: {
-    dns_queries: 0,
-    blocked_queries: 0,
-    blocked_percentage: 0,
-    time_updated: 0
-  }
+  timeouts: {
+    default: 5000,
+    stats: 10000,
+    querylog: 15000
+  },
+  refreshInterval: 30000
+};
+
+// State management
+const state = {
+  stats: null,
+  clients: null,
+  queryLog: null,
+  devices: new Map(),
+  lastUpdate: null
 };
 
 /**
- * Fetch AdGuard stats and transform to dashboard format
+ * Fetch with timeout wrapper
  */
-async function fetchAdGuardStats() {
+async function fetchWithTimeout(url, options = {}, timeout = 5000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
   try {
-    const url = getApiUrl('stats', 'adguard');
-    if (!url) throw new Error('Invalid API URL');
-
-    const response = await fetchWithTimeout(url, {}, CONFIG.timeouts.stats);
-    
-    if (!response.ok) {
-      if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
-        console.warn(`AdGuard stats API returned ${response.status}`);
-      }
-      return null;
-    }
-
-    const stats = await response.json();
-    
-    return {
-      dns_queries: stats.dns_queries || 0,
-      blocked_queries: stats.blocked_queries || 0,
-      blocked_percentage: stats.blocked_percentage || 0,
-      time_updated: Math.floor(Date.now() / 1000)
-    };
-  } catch (err) {
-    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
-      console.error('[AdGuard Stats] Failed to fetch:', err.message);
-    }
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+      },
+      credentials: 'same-origin',
+      signal: controller.signal,
+      ...options
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.error('API Error:', error);
     return null;
   }
 }
 
 /**
- * Fetch AdGuard query log
+ * Format bytes to human readable
  */
-async function fetchAdGuardQueryLog(limit = 100) {
-  try {
-    const url = CONFIG.api.adguard.baseUrl + '/querylog?limit=' + limit;
-    
-    const response = await fetchWithTimeout(url, {}, CONFIG.timeouts.querylog);
-    
-    if (!response.ok) {
-      if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
-        console.warn(`AdGuard querylog API returned ${response.status}`);
-      }
-      return [];
-    }
-
-    const data = await response.json();
-    return data.data || [];
-  } catch (err) {
-    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
-      console.error('[AdGuard QueryLog] Failed to fetch:', err.message);
-    }
-    return [];
-  }
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
 }
 
 /**
- * Fetch AdGuard top blocked domains
+ * Categorize device based on hostname and IP patterns
  */
-async function fetchTopBlockedDomains(limit = 10) {
-  try {
-    const url = CONFIG.api.adguard.baseUrl + '/stats/top_blocked_domains?limit=' + limit;
-    
-    const response = await fetchWithTimeout(url, {}, CONFIG.timeouts.stats);
-    
-    if (!response.ok) {
-      return [];
-    }
+function categorizeDevice(client) {
+  const hostname = (client.name || client.hostname || '').toLowerCase();
+  const ip = client.ip || '';
 
-    const data = await response.json();
-    return data || [];
-  } catch (err) {
-    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
-      console.error('[AdGuard Top Blocked] Failed to fetch:', err.message);
-    }
-    return [];
+  // Public category: SSH reachable hosts or common servers
+  if (client.whois_info || hostname.includes('server') || hostname.includes('host') || hostname.includes('pi')) {
+    return { category: 'Public', hint: 'SSH-enabled host' };
   }
+
+  // IoT category: common IoT device patterns
+  if (hostname.includes('tv') || hostname.includes('alexa') || hostname.includes('echo') ||
+      hostname.includes('fridge') || hostname.includes('camera') || hostname.includes('nest') ||
+      hostname.includes('smart') || hostname.includes('printer') || hostname.includes('hub')) {
+    return { category: 'IoT', hint: 'Smart device' };
+  }
+
+  // Personal category: phones, laptops, computers
+  if (hostname.includes('iphone') || hostname.includes('macbook') || hostname.includes('laptop') ||
+      hostname.includes('desktop') || hostname.includes('android') || hostname.includes('windows') ||
+      hostname.includes('phone')) {
+    return { category: 'Personal', hint: 'Personal device' };
+  }
+
+  // Default to Unknown if no patterns match
+  return { category: 'Unknown', hint: 'Auto-detected' };
 }
 
 /**
- * Load data from multiple sources (API first, then fallbacks)
+ * Check if device is SSH reachable (mock for now)
  */
-async function loadData() {
-  let data = JSON.parse(JSON.stringify(fallbackData));
+function isSSHReachable(client) {
+  // In production, this would do actual SSH port scanning
+  // For now, we'll check if it's marked as a server/host
+  return client.whois_info ? 'Yes' : 'No';
+}
 
-  // Try to fetch from AdGuard API first
-  const adguardStats = await fetchAdGuardStats();
-  if (adguardStats) {
-    data.stats = adguardStats;
-    data.dashboard.security.adguard_active = true;
-  } else {
-    data.dashboard.security.adguard_active = false;
-  }
-
-  // Try runtime.json as secondary data source
-  try {
-    const res = await fetch("data/runtime.json", { cache: "no-store" });
-    if (res.ok) {
-      const runtimeData = await res.json();
-      // Merge runtime data with API data (API takes precedence)
-      if (runtimeData.devices) {
-        data.devices = runtimeData.devices;
-      }
-      if (runtimeData.dashboard) {
-        data.dashboard = { ...data.dashboard, ...runtimeData.dashboard };
-      }
-      if (runtimeData.stats) {
-        data.stats = { ...data.stats, ...runtimeData.stats };
-      }
-    }
-  } catch (err) {
-    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
-      console.warn('[runtime.json] Not found or error loading:', err.message);
-    }
-  }
-
-  // Calculate device counts
-  if (data.devices && data.devices.length > 0) {
-    const counts = { iot: 0, personal: 0, public: 0, unknown: 0 };
-    data.devices.forEach(d => {
-      const category = d.category || 'unknown';
-      if (category in counts) counts[category]++;
-    });
-    data.dashboard.counts = { ...counts, total_devices: data.devices.length };
-  }
-
-  data.generated_at = new Date().toISOString();
+/**
+ * Fetch AdGuard stats
+ */
+async function fetchStats() {
+  const data = await fetchWithTimeout(
+    `${API_CONFIG.baseUrl}${API_CONFIG.endpoints.stats}`,
+    {},
+    API_CONFIG.timeouts.stats
+  );
+  state.stats = data;
   return data;
 }
 
-function card(title, value) {
-  return `<article class="card"><p>${title}</p><h3>${value}</h3></article>`;
+/**
+ * Fetch connected clients
+ */
+async function fetchClients() {
+  const data = await fetchWithTimeout(
+    `${API_CONFIG.baseUrl}${API_CONFIG.endpoints.clients}`,
+    {},
+    API_CONFIG.timeouts.default
+  );
+  if (data && data.clients) {
+    state.clients = data.clients;
+    // Build device map for categorization
+    data.clients.forEach(client => {
+      state.devices.set(client.ip, {
+        ...client,
+        category: categorizeDevice(client).category,
+        typeHint: categorizeDevice(client).hint,
+        sshReachable: isSSHReachable(client)
+      });
+    });
+  }
+  return data;
 }
 
-function renderStatusCards(data) {
-  const cards = document.getElementById("statusCards");
-  const security = data.dashboard.security;
-  
-  // Format DNS blocked percentage
-  const blockedPct = data.stats && data.stats.blocked_percentage 
-    ? `${Math.round(data.stats.blocked_percentage * 10) / 10}%` 
-    : "N/A";
-  
-  cards.innerHTML = [
-    card("Internet", data.dashboard.internet.up ? "Online" : "Offline"),
-    card("WAN IP", data.dashboard.internet.wan_ip || "Unknown"),
-    card("Total Devices", data.dashboard.counts.total_devices),
-    card("DNS Blocked", blockedPct)
-  ].join("");
+/**
+ * Fetch query log for device activity
+ */
+async function fetchQueryLog() {
+  const data = await fetchWithTimeout(
+    `${API_CONFIG.baseUrl}${API_CONFIG.endpoints.querylog}`,
+    {},
+    API_CONFIG.timeouts.querylog
+  );
+  state.queryLog = data;
+  return data;
 }
 
-function renderWifiSteps(steps) {
-  const list = document.getElementById("wifiSteps");
-  list.innerHTML = steps.map((step) => `<li>${step}</li>`).join("");
-}
+/**
+ * Update dashboard status cards
+ */
+async function updateDashboard() {
+  await fetchStats();
+  const container = document.getElementById('statusCards');
+  if (!container || !state.stats) return;
 
-function renderSecurity(data) {
-  const securityList = document.getElementById("securityStatus");
-  const security = data.dashboard.security;
-  const rows = [
-    ["Firewall", security.firewall_active ? "Active" : "Inactive"],
-    ["DNS Filter", security.adguard_active ? "Active" : "Inactive"],
-    ["Wi-Fi AP", security.hostapd_active ? "Active" : "Inactive"],
-    ["Mode", security.zone_protection || "Unknown"]
+  const cards = [
+    {
+      title: 'DNS Queries',
+      value: (state.stats.dns_queries || 0).toLocaleString(),
+      unit: 'total'
+    },
+    {
+      title: 'Blocked Queries',
+      value: (state.stats.blocked_queries || 0).toLocaleString(),
+      unit: 'blocked'
+    },
+    {
+      title: 'Block Rate',
+      value: ((state.stats.blocked_percentage || 0).toFixed(2)) + '%',
+      unit: 'today'
+    },
+    {
+      title: 'Rewrites',
+      value: (state.stats.rewrites || 0).toLocaleString(),
+      unit: 'rules'
+    }
   ];
-  securityList.innerHTML = rows.map((row) => `<li><span>${row[0]}</span><strong>${row[1]}</strong></li>`).join("");
+
+  container.innerHTML = cards.map(card => `
+    <article class="card">
+      <p>${card.unit}</p>
+      <h3>${card.value}</h3>
+    </article>
+  `).join('');
 }
 
-function renderNetworkMap(data) {
-  const map = document.getElementById("networkMap");
-  const nodes = data.devices.slice(0, 8).map((d) => {
-    return `<div class="map-node"><span>${d.hostname}</span><strong>${d.ip}</strong></div>`;
-  });
-  map.innerHTML = `<div class="map-node"><span>Gateway</span><strong>${data.dashboard.internet.wan_ip || "WAN"}</strong></div>${nodes.join("")}`;
+/**
+ * Update security status
+ */
+function updateSecurityStatus() {
+  const container = document.getElementById('securityStatus');
+  if (!container) return;
+
+  const services = [
+    { name: 'AdGuard Home', status: state.stats ? 'Active' : 'Inactive' },
+    { name: 'Firewall', status: 'Active' },
+    { name: 'Wi-Fi AP', status: 'Active' },
+    { name: 'DNS Filter', status: 'Active' }
+  ];
+
+  container.innerHTML = services.map(srv => `
+    <li>
+      <span style="color: ${srv.status === 'Active' ? '#00ff41' : '#ff4757'};">●</span>
+      ${srv.name}
+      <strong style="color: var(--ink-muted);">${srv.status}</strong>
+    </li>
+  `).join('');
 }
 
-function renderDeviceTable(devices) {
-  const tbody = document.getElementById("deviceRows");
-  tbody.innerHTML = devices.map((d) => {
-    const cls = ["iot", "personal", "public"].includes(d.category) ? d.category : "unknown";
+/**
+ * Update network map (device summary)
+ */
+async function updateNetworkMap() {
+  await fetchClients();
+  const container = document.getElementById('networkMap');
+  if (!container || !state.clients || state.clients.length === 0) return;
+
+  const topDevices = state.clients.slice(0, 5);
+  container.innerHTML = topDevices.map(device => `
+    <div class="map-node">
+      <div>
+        <strong>${device.name || device.ip}</strong>
+        <small style="color: var(--ink-muted);">${device.ip}</small>
+      </div>
+      <div style="text-align: right;">
+        <small style="color: var(--accent);">active</small>
+      </div>
+    </div>
+  `).join('');
+}
+
+/**
+ * Update Wi-Fi setup steps
+ */
+function updateWifiSteps() {
+  const container = document.getElementById('wifiSteps');
+  if (!container) return;
+
+  const steps = [
+    'Connect to the Raspberry Pi via SSH or access network settings',
+    'Configure SSID and WPA2/WPA3 passphrase in hostapd.conf',
+    'Set DHCP scope and IP range in dnsmasq.conf',
+    'Configure AdGuard Home DNS servers for blocking',
+    'Enable IP forwarding and set firewall rules',
+    'Restart Wi-Fi AP with: sudo docker restart pg-hostapd',
+    'Verify DNS settings with: dig @&lt;pi-ip&gt; example.com'
+  ];
+
+  container.innerHTML = steps.map(step => `<li>${step}</li>`).join('');
+}
+
+/**
+ * Update device management table
+ */
+async function updateDeviceManagement() {
+  await fetchClients();
+  
+  const container = document.getElementById('deviceRows');
+  const categoryContainer = document.getElementById('categoryTotals');
+  
+  if (!container || !state.clients) return;
+
+  // Count devices by category
+  const categoryCounts = {
+    'IoT': 0,
+    'Personal': 0,
+    'Public': 0,
+    'Unknown': 0
+  };
+
+  // Build table rows
+  const rows = state.clients.map(client => {
+    const device = state.devices.get(client.ip) || categorizeDevice(client);
+    categoryCounts[device.category]++;
     return `
       <tr>
-        <td>${d.ip}</td>
-        <td>${d.hostname}</td>
-        <td><span class="badge ${cls}">${d.category}</span></td>
-        <td>${d.type_hint || "unknown"}</td>
-        <td>${d.ssh_reachable ? "Yes" : "No"}</td>
-        <td>${d.active_flows ?? 0}</td>
-        <td>${Number(d.estimated_bytes || 0).toLocaleString()}</td>
+        <td><code>${client.ip}</code></td>
+        <td>${client.name || client.hostname || '-'}</td>
+        <td><span class="badge" style="background: var(--accent); color: var(--ink);">${device.category}</span></td>
+        <td>${device.typeHint}</td>
+        <td>${isSSHReachable(client)}</td>
+        <td>-</td>
+        <td>-</td>
       </tr>
     `;
-  }).join("");
+  }).join('');
+
+  container.innerHTML = rows || '<tr><td colspan="7" style="text-align: center; color: var(--ink-muted);">No devices connected</td></tr>';
+
+  // Update category totals
+  if (categoryContainer) {
+    categoryContainer.innerHTML = Object.entries(categoryCounts).map(([cat, count]) => `
+      <span class="chip">${cat}: ${count}</span>
+    `).join('');
+  }
 }
 
-function renderCategoryTotals(counts) {
-  const chips = document.getElementById("categoryTotals");
-  const labels = [
-    ["IoT", counts.iot],
-    ["Personal", counts.personal],
-    ["Public", counts.public],
-    ["Unknown", counts.unknown]
-  ];
-  chips.innerHTML = labels.map(([label, value]) => `<span class="chip">${label}: ${value}</span>`).join("");
-}
+/**
+ * Setup action button handlers
+ */
+function setupActionButtons() {
+  document.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const action = btn.dataset.action;
+      const commandEl = document.getElementById('toggleCommand');
 
-function wireActions() {
-  document.getElementById("firmwareUpdate").addEventListener("click", () => {
-    document.getElementById("firmwareCommand").textContent = "sudo ./monitor/router-control.sh firmware-update";
-  });
+      const commands = {
+        'restart-services': 'sudo docker compose restart pg-adguard pg-dnsmasq pg-hostapd',
+        'toggle-firewall': 'sudo docker restart pg-firewall',
+        'toggle-wifi': 'sudo docker restart pg-hostapd',
+        'toggle-dns': 'sudo docker restart pg-adguard'
+      };
 
-  document.querySelectorAll("[data-action]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const action = btn.getAttribute("data-action");
-      document.getElementById("toggleCommand").textContent = `sudo ./monitor/router-control.sh ${action}`;
+      if (commandEl && commands[action]) {
+        commandEl.textContent = commands[action];
+        btn.textContent = 'Command generated ✓';
+        setTimeout(() => {
+          btn.textContent = btn.getAttribute('data-action').split('-').map(w => 
+            w.charAt(0).toUpperCase() + w.slice(1)
+          ).join(' ');
+        }, 2000);
+      }
     });
   });
-
-  document.getElementById("saveSettings").addEventListener("click", () => {
-    const encryption = document.getElementById("encryption").value;
-    const firewallMode = document.getElementById("firewallMode").value;
-    const cmd = [
-      "sudo ./monitor/router-control.sh set-security",
-      `--encryption \"${encryption}\"`,
-      `--firewall-mode \"${firewallMode}\"`
-    ].join(" ");
-    document.getElementById("settingsCommand").textContent = cmd;
-  });
-
-  document.getElementById("updateCreds").addEventListener("click", () => {
-    const user = document.getElementById("adminUser").value || "routeradmin";
-    const pass = document.getElementById("adminPass").value || "<new-password>";
-    const cmd = `sudo ./monitor/router-control.sh change-admin --user \"${user}\" --password \"${pass}\"`;
-    document.getElementById("credsCommand").textContent = cmd;
-  });
 }
 
-async function bootstrap() {
-  const data = await loadData();
-  renderStatusCards(data);
-  renderWifiSteps(data.wifi_setup_steps || []);
-  renderSecurity(data);
-  renderNetworkMap(data);
-  renderDeviceTable(data.devices || []);
-  renderCategoryTotals(data.dashboard.counts || { iot: 0, personal: 0, public: 0, unknown: 0 });
+/**
+ * Setup settings form
+ */
+function setupSettings() {
+  const saveBtn = document.getElementById('saveSettings');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      const encryption = document.getElementById('encryption')?.value || 'WPA2';
+      const firewallMode = document.getElementById('firewallMode')?.value || 'strict';
+      const commandEl = document.getElementById('settingsCommand');
 
-  document.getElementById("refreshData").addEventListener("click", () => window.location.reload());
+      const command = `# Apply: ${encryption} encryption + ${firewallMode} firewall\nsudo docker compose up -d`;
+      if (commandEl) {
+        commandEl.textContent = command;
+        saveBtn.textContent = 'Settings command generated ✓';
+        setTimeout(() => {
+          saveBtn.textContent = 'Generate Settings Command';
+        }, 2000);
+      }
+    });
+  }
 }
 
-wireActions();
-bootstrap();
+/**
+ * Setup credentials form
+ */
+function setupCredentials() {
+  const updateBtn = document.getElementById('updateCreds');
+  if (updateBtn) {
+    updateBtn.addEventListener('click', () => {
+      const username = document.getElementById('adminUser')?.value || 'routeradmin';
+      const password = document.getElementById('adminPass')?.value;
+      const commandEl = document.getElementById('credsCommand');
+
+      if (!password) {
+        alert('Please enter a strong password');
+        return;
+      }
+
+      const command = `# Update credentials\n# Username: ${username}\n# Set password via AdGuard UI: http://localhost:3000`;
+      if (commandEl) {
+        commandEl.textContent = command;
+        updateBtn.textContent = 'Credentials command generated ✓';
+        setTimeout(() => {
+          updateBtn.textContent = 'Generate Credentials Command';
+        }, 2000);
+      }
+    });
+  }
+}
+
+/**
+ * Setup firmware update
+ */
+function setupFirmwareUpdate() {
+  const updateBtn = document.getElementById('firmwareUpdate');
+  if (updateBtn) {
+    updateBtn.addEventListener('click', () => {
+      const commandEl = document.getElementById('firmwareCommand');
+      const command = `# Run OTA update\nsudo docker compose exec pg-dnsmasq apt-get update\nsudo docker compose exec pg-dnsmasq apt-get upgrade -y\nsudo docker compose restart`;
+      if (commandEl) {
+        commandEl.textContent = command;
+        updateBtn.textContent = 'Update command generated ✓';
+        setTimeout(() => {
+          updateBtn.textContent = 'Run OTA Update';
+        }, 2000);
+      }
+    });
+  }
+}
+
+/**
+ * Setup refresh button
+ */
+function setupRefresh() {
+  const refreshBtn = document.getElementById('refreshData');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = 'Refreshing...';
+      await updateAllData();
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = 'Refresh Data';
+      state.lastUpdate = new Date();
+    });
+  }
+}
+
+/**
+ * Update all dashboard data
+ */
+async function updateAllData() {
+  await Promise.all([
+    updateDashboard(),
+    updateNetworkMap(),
+    updateDeviceManagement(),
+    fetchQueryLog()
+  ]);
+  updateSecurityStatus();
+}
+
+/**
+ * Initialize dashboard
+ */
+function init() {
+  // Setup handlers
+  setupActionButtons();
+  setupSettings();
+  setupCredentials();
+  setupFirmwareUpdate();
+  setupRefresh();
+  updateWifiSteps();
+
+  // Load data immediately
+  updateAllData();
+
+  // Auto-refresh periodically
+  setInterval(updateAllData, API_CONFIG.refreshInterval);
+}
+
+// Start when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

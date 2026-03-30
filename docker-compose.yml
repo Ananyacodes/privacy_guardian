@@ -19,7 +19,7 @@ services:
 
     # Port mappings
     ports:
-      - "3000:3000/tcp" # Admin UI
+      - "3000:80/tcp" # Admin UI
       - "53:53/tcp" # DNS (TCP)
       - "53:53/udp" # DNS (UDP)
 
@@ -33,7 +33,7 @@ services:
 
     # Resource limits for Pi
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/login.html"]
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:80/login.html"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -164,7 +164,7 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://localhost"]
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1"]
       interval: 30s
       timeout: 10s
       retries: 3
