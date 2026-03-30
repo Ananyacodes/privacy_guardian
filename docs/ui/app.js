@@ -1,7 +1,12 @@
+/**
+ * Privacy Guardian Dashboard
+ * Integrates with AdGuard Home API for real-time stats and query logs
+ */
+
 const fallbackData = {
   generated_at: new Date().toISOString(),
   dashboard: {
-    internet: { up: true, wan_ip: "10.0.0.28" },
+    internet: { up: true, wan_ip: "192.168.4.1" },
     security: {
       firewall_active: true,
       adguard_active: true,
@@ -9,10 +14,10 @@ const fallbackData = {
       zone_protection: "strict"
     },
     counts: {
-      total_devices: 5,
-      iot: 2,
-      personal: 2,
-      public: 1,
+      total_devices: 0,
+      iot: 0,
+      personal: 0,
+      public: 0,
       unknown: 0
     }
   },
@@ -23,23 +28,146 @@ const fallbackData = {
     "Set DNS to local resolver (AdGuard on router) and block external DNS bypass.",
     "Save, reboot AP services, then verify internet and DNS leak tests."
   ],
-  devices: [
-    { ip: "192.168.4.12", hostname: "livingroom-tv", category: "iot", type_hint: "TV", ssh_reachable: false, active_flows: 11, estimated_bytes: 343992 },
-    { ip: "192.168.4.18", hostname: "kitchen-fridge", category: "iot", type_hint: "Fridge", ssh_reachable: false, active_flows: 4, estimated_bytes: 95120 },
-    { ip: "192.168.4.21", hostname: "ananya-phone", category: "personal", type_hint: "Phone", ssh_reachable: false, active_flows: 17, estimated_bytes: 744811 },
-    { ip: "192.168.4.27", hostname: "work-laptop", category: "personal", type_hint: "Laptop", ssh_reachable: false, active_flows: 29, estimated_bytes: 1998120 },
-    { ip: "192.168.4.40", hostname: "home-server", category: "public", type_hint: "Server", ssh_reachable: true, active_flows: 39, estimated_bytes: 6542109 }
-  ]
+  devices: [],
+  stats: {
+    dns_queries: 0,
+    blocked_queries: 0,
+    blocked_percentage: 0,
+    time_updated: 0
+  }
 };
 
+/**
+ * Fetch AdGuard stats and transform to dashboard format
+ */
+async function fetchAdGuardStats() {
+  try {
+    const url = getApiUrl('stats', 'adguard');
+    if (!url) throw new Error('Invalid API URL');
+
+    const response = await fetchWithTimeout(url, {}, CONFIG.timeouts.stats);
+    
+    if (!response.ok) {
+      if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
+        console.warn(`AdGuard stats API returned ${response.status}`);
+      }
+      return null;
+    }
+
+    const stats = await response.json();
+    
+    return {
+      dns_queries: stats.dns_queries || 0,
+      blocked_queries: stats.blocked_queries || 0,
+      blocked_percentage: stats.blocked_percentage || 0,
+      time_updated: Math.floor(Date.now() / 1000)
+    };
+  } catch (err) {
+    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
+      console.error('[AdGuard Stats] Failed to fetch:', err.message);
+    }
+    return null;
+  }
+}
+
+/**
+ * Fetch AdGuard query log
+ */
+async function fetchAdGuardQueryLog(limit = 100) {
+  try {
+    const url = CONFIG.api.adguard.baseUrl + '/querylog?limit=' + limit;
+    
+    const response = await fetchWithTimeout(url, {}, CONFIG.timeouts.querylog);
+    
+    if (!response.ok) {
+      if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
+        console.warn(`AdGuard querylog API returned ${response.status}`);
+      }
+      return [];
+    }
+
+    const data = await response.json();
+    return data.data || [];
+  } catch (err) {
+    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
+      console.error('[AdGuard QueryLog] Failed to fetch:', err.message);
+    }
+    return [];
+  }
+}
+
+/**
+ * Fetch AdGuard top blocked domains
+ */
+async function fetchTopBlockedDomains(limit = 10) {
+  try {
+    const url = CONFIG.api.adguard.baseUrl + '/stats/top_blocked_domains?limit=' + limit;
+    
+    const response = await fetchWithTimeout(url, {}, CONFIG.timeouts.stats);
+    
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = await response.json();
+    return data || [];
+  } catch (err) {
+    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
+      console.error('[AdGuard Top Blocked] Failed to fetch:', err.message);
+    }
+    return [];
+  }
+}
+
+/**
+ * Load data from multiple sources (API first, then fallbacks)
+ */
 async function loadData() {
+  let data = JSON.parse(JSON.stringify(fallbackData));
+
+  // Try to fetch from AdGuard API first
+  const adguardStats = await fetchAdGuardStats();
+  if (adguardStats) {
+    data.stats = adguardStats;
+    data.dashboard.security.adguard_active = true;
+  } else {
+    data.dashboard.security.adguard_active = false;
+  }
+
+  // Try runtime.json as secondary data source
   try {
     const res = await fetch("data/runtime.json", { cache: "no-store" });
-    if (!res.ok) throw new Error("runtime.json not found");
-    return await res.json();
+    if (res.ok) {
+      const runtimeData = await res.json();
+      // Merge runtime data with API data (API takes precedence)
+      if (runtimeData.devices) {
+        data.devices = runtimeData.devices;
+      }
+      if (runtimeData.dashboard) {
+        data.dashboard = { ...data.dashboard, ...runtimeData.dashboard };
+      }
+      if (runtimeData.stats) {
+        data.stats = { ...data.stats, ...runtimeData.stats };
+      }
+    }
   } catch (err) {
-    return fallbackData;
+    if (CONFIG.debug.enabled && CONFIG.debug.logErrors) {
+      console.warn('[runtime.json] Not found or error loading:', err.message);
+    }
   }
+
+  // Calculate device counts
+  if (data.devices && data.devices.length > 0) {
+    const counts = { iot: 0, personal: 0, public: 0, unknown: 0 };
+    data.devices.forEach(d => {
+      const category = d.category || 'unknown';
+      if (category in counts) counts[category]++;
+    });
+    data.dashboard.counts = { ...counts, total_devices: data.devices.length };
+  }
+
+  data.generated_at = new Date().toISOString();
+  return data;
 }
 
 function card(title, value) {
@@ -49,11 +177,17 @@ function card(title, value) {
 function renderStatusCards(data) {
   const cards = document.getElementById("statusCards");
   const security = data.dashboard.security;
+  
+  // Format DNS blocked percentage
+  const blockedPct = data.stats && data.stats.blocked_percentage 
+    ? `${Math.round(data.stats.blocked_percentage * 10) / 10}%` 
+    : "N/A";
+  
   cards.innerHTML = [
     card("Internet", data.dashboard.internet.up ? "Online" : "Offline"),
     card("WAN IP", data.dashboard.internet.wan_ip || "Unknown"),
     card("Total Devices", data.dashboard.counts.total_devices),
-    card("Protection", security.zone_protection || "Unknown")
+    card("DNS Blocked", blockedPct)
   ].join("");
 }
 

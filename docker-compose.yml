@@ -138,6 +138,42 @@ services:
     stdin_open: true
     tty: true
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # NGINX UI — Router Dashboard Frontend
+  # ─────────────────────────────────────────────────────────────────────────
+  pg-ui:
+    image: nginx:alpine
+    container_name: pg-ui
+    hostname: privacy-guardian-ui
+
+    # Port mappings
+    ports:
+      - "8080:80"
+
+    # Volumes
+    volumes:
+      - ./docs/ui:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Depends on AdGuard for API calls
+    depends_on:
+      - pg-adguard
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Environment
+    environment:
+      - TZ=UTC
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Volumes for persistent data
 # ─────────────────────────────────────────────────────────────────────────────
