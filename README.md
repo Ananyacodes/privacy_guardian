@@ -265,3 +265,47 @@ sudo systemctl status nftables
 - **SD card wear** — logging is configured conservatively; avoid enabling verbose logging in production
 - **AdGuard password** — set a strong password in the initial wizard; the UI has no network-level auth other than the nftables MGMT_IP restriction
 - **Upstream DNS privacy** — Quad9 and Mullvad both have strong no-logging policies as of 2026; your ISP cannot see your DNS queries but your upstream resolver can
+
+---
+
+## Web UI Prototype
+
+A basic frontend is now available in `docs/ui/` with:
+
+- Wi-Fi setup steps (generic WPA flow)
+- OTA firmware update action
+- Settings UI for WPA2/WPA3 and firewall mode selection
+- Admin credential change command generator
+- Dashboard cards for internet status, network map, and security status
+- Device management table with category-aware detection and usage tracking hints
+- Restart and toggle controls for firewall, Wi-Fi AP, and DNS filter
+
+### Files
+
+- `docs/ui/index.html` — main dashboard page
+- `docs/ui/styles.css` — styling and responsive layout
+- `docs/ui/app.js` — rendering and command-generation logic
+- `docs/ui/data/runtime.json` — runtime data consumed by the UI
+- `monitor/device-insights.sh` — generates runtime JSON with device categories
+- `monitor/router-control.sh` — restart/toggle/OTA/admin action script
+
+### Run locally
+
+```bash
+# 1) Generate latest data snapshot for dashboard
+sudo chmod +x monitor/*.sh
+sudo ./monitor/device-insights.sh ./docs/ui/data/runtime.json
+
+# 2) Open the UI directly in a browser
+# (or serve docs/ui with any static file server)
+xdg-open docs/ui/index.html
+```
+
+### Device Management Detection Rules
+
+- **IoT**: hostnames like `tv`, `fridge`, `camera`, `thermostat`, `plug`, `bulb`
+- **Personal**: hostnames like `laptop`, `phone`, `iphone`, `android`, `ipad`, `macbook`
+- **Public**: any SSH-reachable device (`:22`) and hostnames like `server`, `nas`, `desktop`, `workstation`, `pc`
+- **Unknown**: devices that do not match current heuristics
+
+Current usage tracking is estimated from active conntrack flows and byte counters when available (`/proc/net/nf_conntrack`).
