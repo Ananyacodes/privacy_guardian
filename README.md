@@ -1,203 +1,419 @@
-# Privacy Guardian v2.1 — Zero-Leak Edition
-## Complete Deployment Guide
+# 🛡️ Privacy Guardian
+
+> **Zero-Leak Privacy Router for Raspberry Pi & Docker**
+
+Privacy Guardian is a complete privacy-focused network router that blocks tracking, ads, and malware at the DNS layer while providing complete IPv4/IPv6 protection with advanced firewall rules.
+
+**Version:** 3.0 (Docker-based)  
+**Status:** Production Ready
 
 ---
 
-## What This Is
+## 🚀 Quick Start
 
-A privacy router running on a Raspberry Pi that:
-- Creates its own Wi-Fi network (hostapd)
-- Assigns IPs to devices (dnsmasq DHCP)
-- Filters tracking/ad/malware domains (AdGuard Home)
-- Blocks all DNS bypass attempts — DoH, DoT, hardcoded DNS (nftables)
-- Hides device identities behind NAT masquerade (nftables)
-- Blocks known tracker IPs dynamically (nftables + FireHOL)
-- Hardens SSH access and admin UI (nftables + fail2ban)
-- Covers IPv6 fully — no IPv6 leak path
+### Using Docker (Recommended)
 
-**Realistic false-negative rate: <10%**
-(Only ultra-sophisticated hardcoded app telemetry that no Pi-level tool can stop without breaking normal internet use.)
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/privacy_guardian.git
+cd privacy_guardian
 
----
+# Configure environment
+cp .env.example .env
+nano .env  # Edit IP addresses, SSID, password
 
-## Hardware Requirements
+# Start the deployment
+docker compose up -d
 
-| Component | Minimum | Recommended |
-|---|---|---|
-| Board | Raspberry Pi 3B | Raspberry Pi 4 (2GB+) |
-| OS | Raspberry Pi OS Lite 32-bit | Raspberry Pi OS Lite 64-bit (Bookworm) |
-| SD Card | 8GB Class 10 | 32GB A1/A2 rated |
-| Power | 2.5A USB-C | Official Pi 4 PSU |
-| Ethernet | Any USB adapter | Built-in eth0 (Pi 3/4) |
+# Check status
+docker compose logs -f
+```
 
-**Interfaces used:**
-- `eth0` — WAN: plugs into your existing router/ISP modem
-- `wlan0` — LAN: broadcasts the Privacy Guardian Wi-Fi network
+**Time to deploy:** ~2 minutes
+
+### Traditional Installation (v2.1)
+
+See [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
 ---
 
-## File Map
+## ✨ What It Does
+
+| Feature              | Status | Details                                              |
+| -------------------- | ------ | ---------------------------------------------------- |
+| **DNS Filtering**    | ✅     | AdGuard Home blocks tracking/ads/malware domains     |
+| **DoH/DoT Blocking** | ✅     | Blocks DNS-over-HTTPS/TLS bypass attempts            |
+| **IP Blocking**      | ✅     | Dynamic FireHOL tracker IP blocklist (updated daily) |
+| **NAT Masquerade**   | ✅     | Hides device identities behind router IP             |
+| **IPv6 Protection**  | ✅     | Complete IPv6 privacy + leak prevention              |
+| **Wi-Fi AP**         | ✅     | Hostapd-based access point (2.4GHz + 5GHz)           |
+| **DHCP Server**      | ✅     | dnsmasq handles IP assignment                        |
+| **Firewall**         | ✅     | nftables with advanced rules (IPv4 + IPv6)           |
+| **Admin Dashboard**  | ✅     | AdGuard Home Web UI + pg-manage CLI                  |
+| **Fail2Ban**         | ✅     | SSH/Admin UI brute-force protection                  |
+
+**Expected false-negative rate: <10%**
+
+---
+
+## 📋 Hardware Requirements
+
+| Component      | Minimum                     | Recommended                            |
+| -------------- | --------------------------- | -------------------------------------- |
+| **Board**      | Raspberry Pi 3B             | Raspberry Pi 4 (2GB+) or Pi 5          |
+| **OS**         | Raspberry Pi OS Lite 32-bit | Raspberry Pi OS Lite 64-bit (Bookworm) |
+| **Storage**    | 8GB SD Card Class 10        | 32GB A1/A2 rated SSD via USB3          |
+| **Power**      | 2.5A USB-C                  | Official Pi 4/5 PSU                    |
+| **Networking** | USB Ethernet adapter        | Built-in Gigabit eth0 (Pi 4+)          |
+
+**Network Interfaces:**
+
+- `eth0` — WAN: upstream router/modem (DHCP or static)
+- `wlan0` — LAN: Privacy Guardian Wi-Fi network (192.168.4.0/24)
+
+---
+
+## 📁 Project Structure
 
 ```
 privacy-guardian/
-├── install.sh                  ← Run this first (full automated setup)
-├── nftables.conf               ← Firewall rules (IPv4 + IPv6)
-├── hostapd.conf                ← Wi-Fi access point config
-├── dnsmasq.conf                ← DHCP server config
-├── dhcpcd.conf                 ← Network interface config
-├── 99-privacy-guardian.conf    ← Kernel network hardening (sysctl)
-├── adguard-setup.conf          ← AdGuard Home setup guide + blocklists
-├── update-trackers.sh          ← Daily tracker IP blocklist updater
-├── update-doh-ips.sh           ← Monthly DoH resolver IP refresher
-├── disable-ipv6.sh             ← Alternative: disable IPv6 entirely
-├── pg-test.sh                  ← Post-deploy diagnostics
-├── pg-manage.sh                ← Ongoing management CLI
-└── README.md                   ← This file
+├── README.md                                 ← Start here
+├── .env.example                              ← Copy to .env
+├── docker-compose.yml                        ← Main deployment config
+├── LICENSE                                   ← MIT License
+│
+├── docker/                                   ← All Docker-related files
+│   ├── Dockerfile.hostapd                    ← Wi-Fi AP service
+│   ├── Dockerfile.dnsmasq                    ← DHCP service
+│   ├── Dockerfile.firewall                   ← Firewall (nftables) service
+│   └── Dockerfile.nginx                      ← Reverse proxy (optional)
+│
+├── config/
+│   ├── v3.0-docker/                          ← Docker-specific configs
+│   │   ├── hostapd.conf                      ← Wi-Fi AP settings
+│   │   ├── dnsmasq.conf                      ← DHCP configuration
+│   │   ├── nftables.conf                     ← Firewall rules
+│   │   ├── dhcpcd.conf                       ← Interface config
+│   │   ├── 99-privacy-guardian.conf          ← Kernel hardening (sysctl)
+│   │   └── adguard-setup.conf                ← AdGuard Home setup guide
+│   │
+│   └── v2.1-traditional/                     ← Traditional installation configs
+│       ├── hostapd.conf                      ← (Same files, kept for reference)
+│       ├── dnsmasq.conf
+│       └── ...
+│
+├── scripts/
+│   ├── install/
+│   │   ├── install.sh                        ← Traditional OS-level installer
+│   │   └── install-docker.sh                 ← Docker deployment helper
+│   │
+│   ├── management/
+│   │   ├── pg-manage.sh                      ← Main management CLI
+│   │   └── pg-test.sh                        ← Diagnostics & testing
+│   │
+│   └── maintenance/
+│       ├── update-trackers.sh                ← Daily tracker IP list refresh
+│       ├── update-doh-ips.sh                 ← Monthly DoH IP checker
+│       └── disable-ipv6.sh                   ← IPv6 disabler (alternative)
+│
+├── ui/                                       ← Web interface & settings
+│   ├── index.html                            ← Dashboard UI
+│   ├── app.js                                ← Frontend logic
+│   ├── styles.css                            ← UI styling
+│   └── data/
+│       ├── runtime.json                      ← Runtime metrics
+│       └── config.js                         ← Settings
+│
+├── monitor/                                  ← Monitoring utilities
+│   ├── device-insights.sh                    ← Per-device stats
+│   └── router-control.sh                     ← Remote control commands
+│
+├── docs/
+│   ├── deployment/
+│   │   ├── DEPLOYMENT_DOCKER.md              ← Docker setup guide
+│   │   ├── DEPLOYMENT_TRADITIONAL.md         ← v2.1 setup guide
+│   │   └── AWS_DEPLOYMENT.md                 ← Cloud options (optional)
+│   │
+│   ├── architecture/
+│   │   ├── ARCHITECTURE.md                   ← System design overview
+│   │   ├── NETWORK_DESIGN.md                 ← Network topology
+│   │   └── DATA_FLOW.md                      ← Traffic flow diagrams
+│   │
+│   ├── configuration/
+│   │   ├── HOSTAPD.md                        ← Wi-Fi AP configuration
+│   │   ├── DNSMASQ.md                        ← DHCP configuration
+│   │   ├── NFTABLES.md                       ← Firewall rules
+│   │   └── ADGUARD.md                        ← DNS filtering setup
+│   │
+│   ├── troubleshooting/
+│   │   ├── FAQ.md                            ← Common questions
+│   │   ├── DEBUGGING.md                      ← Debug procedures
+│   │   ├── NETWORK_ISSUES.md                 ← Connection problems
+│   │   └── PERFORMANCE.md                    ← Optimization tips
+│   │
+│   ├── management/
+│   │   ├── MANAGEMENT_CLI.md                 ← pg-manage.sh reference
+│   │   ├── BACKUP_RESTORE.md                 ← Data backup procedures
+│   │   └── UPDATES.md                        ← Update procedures
+│   │
+│   └── api/
+│       ├── ADGUARD_API.md                    ← AdGuard Home API
+│       ├── REST_API.md                       ← pg REST endpoints (future)
+│       └── WEBHOOKS.md                       ← Event webhooks (future)
+│
+└── .github/
+    ├── workflows/
+    │   ├── docker-build.yml                  ← Automated Docker builds
+    │   └── ci-tests.yml                      ← CI/CD tests
+    └── CONTRIBUTING.md                       ← Development guidelines
 ```
 
 ---
 
-## Deployment: Step by Step
+## 🚀 Deployment Options
 
-### 1. Prepare the Pi
+### Option 1: Docker Compose (Recommended)
 
-Flash Raspberry Pi OS Lite (Bookworm) to SD card.
-Enable SSH before first boot by creating an empty file named `ssh` in the boot partition.
+- ✅ Easy deployment & rollback
+- ✅ Containerized isolation
+- ✅ Built-in networking
+- ✅ Simple scaling
 
-Connect:
-- Ethernet cable from Pi `eth0` → your existing router
-- Power on the Pi
+**See:** [DEPLOYMENT_DOCKER.md](docs/deployment/DEPLOYMENT_DOCKER.md)
 
-### 2. Transfer Files
+### Option 2: Traditional Installation
+
+- ⚠️ Requires system-level changes
+- ⚠️ No easy rollback
+- ✅ Direct Pi OS integration
+- ✅ Minimal overhead
+
+**See:** [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
+
+---
+
+## 🔍 What Gets Blocked
+
+### Blocked ✅
+
+- **DNS Tracking** — AdGuard Home blocklists
+- **Hardcoded DNS Bypass** — NAT redirect to local DNS
+- **DNS-over-HTTPS (DoH)** — nftables blocks resolver IPs on :443
+- **DNS-over-TLS (DoT)** — nftables blocks :853
+- **DNS-over-QUIC (DoQ)** — nftables blocks :8853
+- **Tracker IPs** — FireHOL Level 1 blocklist (updated daily)
+- **IP Leaks** — NAT masquerade from 192.168.4.0/24
+- **IPv6 Leaks** — IPv6 privacy + ULA routing
+
+### NOT Blocked ❌
+
+- **Device-level VPN** — Encrypted before reaching router
+- **HTTPS Payload** — Pi cannot inspect encrypted traffic
+- **Sophisticated Telemetry** — Hardcoded app analytics
+- **Tor/Proxy Networks** — By design (user choice)
+
+---
+
+## 📊 Architecture Overview
+
+```
+                        Internet
+                            │
+                        (WAN IP)
+                            │
+              ┌─────────────┼─────────────┬──────────────┐
+              │             │             │              │
+          [Firewall]    [DNS Filter]  [DHCP]        [Wi-Fi AP]
+          (nftables)    (AdGuard)     (dnsmasq)    (hostapd)
+              │             │             │              │
+              └─────────────┼─────────────┴──────────────┘
+                            │
+                    (192.168.4.1/24)
+                            │
+              ┌─────────────┼─────────────┬──────────────┐
+              │             │             │              │
+         [Device A]    [Device B]   [Device C]   [Management]
+         192.168.4.2   192.168.4.3  192.168.4.4  192.168.4.100
+```
+
+**See:** [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)
+
+---
+
+## 🛠️ Management
+
+### Docker Commands
 
 ```bash
-# From your computer:
-scp -r privacy-guardian/ pi@<pi-ip>:~/
-ssh pi@<pi-ip>
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+
+# Restart service
+docker compose restart hostapd
+
+# Shell into container
+docker exec -it privacy-guardian-hostapd /bin/bash
 ```
 
-### 3. Run the Installer
+### Management CLI
 
 ```bash
-cd ~/privacy-guardian
-chmod +x *.sh
-sudo ./install.sh
+# Check system status
+sudo pg-manage.sh status
+
+# View connected devices
+sudo pg-manage.sh clients
+
+# See blocked domains
+sudo pg-manage.sh blocked
+
+# Whitelist a domain
+sudo pg-manage.sh whitelist example.com
+
+# Block an IP
+sudo pg-manage.sh ban 1.2.3.4
+
+# Run diagnostics
+sudo pg-test.sh
 ```
 
-The installer will:
-- Prompt for Wi-Fi SSID password
-- Prompt for your management device IP (the only device that can SSH or access AdGuard UI)
-- Install all packages
-- Configure all services
-- Apply firewall rules
-- Load initial tracker blocklist
-- Run diagnostics
+**See:** [MANAGEMENT_CLI.md](docs/management/MANAGEMENT_CLI.md)
 
-### 4. Complete AdGuard Home Setup
+---
 
-Open in browser from your management device:
+## ⚙️ Configuration
+
+### Environment Variables (.env)
+
+```bash
+# Network Settings
+UPSTREAM_ROUTER_IP=192.168.1.1          # Your existing router
+WLAN_IP=192.168.4.1
+WLAN_SUBNET=192.168.4.0/24
+DHCP_RANGE_START=192.168.4.10
+DHCP_RANGE_END=192.168.4.200
+
+# Wi-Fi Settings
+SSID=PrivacyGuardian
+WPA_PASSPHRASE=YourStrongPassword
+
+# AdGuard Settings
+ADGUARD_IP=192.168.4.1
+ADGUARD_PORT=3000
+ADGUARD_DNS_PORT=53
+
+# Management Settings
+ADMIN_IP=192.168.1.100              # Your management device
+TIMEZONE=Asia/Kolkata
 ```
-http://192.168.4.1:3000
+
+**See:** [.env.example](.env.example)
+
+---
+
+## 📚 Documentation Map
+
+| Document                                                     | Purpose                    |
+| ------------------------------------------------------------ | -------------------------- |
+| [DEPLOYMENT_DOCKER.md](docs/deployment/DEPLOYMENT_DOCKER.md) | Step-by-step Docker setup  |
+| [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md)         | System design & components |
+| [MANAGEMENT_CLI.md](docs/management/MANAGEMENT_CLI.md)       | CLI command reference      |
+| [HOSTAPD.md](docs/configuration/HOSTAPD.md)                  | Wi-Fi AP configuration     |
+| [NFTABLES.md](docs/configuration/NFTABLES.md)                | Firewall rules explanation |
+| [FAQ.md](docs/troubleshooting/FAQ.md)                        | Common questions & answers |
+| [DEBUGGING.md](docs/troubleshooting/DEBUGGING.md)            | Troubleshooting guide      |
+
+---
+
+## 🧪 Testing
+
+### Pre-Deployment Tests
+
+```bash
+# Check YAML syntax
+docker compose config
+
+# Validate nftables rules
+nft -f config/v3.0-docker/nftables.conf -c
+
+# Test DNS
+nslookup google.com 192.168.4.1
 ```
 
-In the wizard:
-1. Set admin username and strong password
-2. Set DNS to listen on `0.0.0.0:53`
-3. Set upstream DNS: `tls://dns.quad9.net`
-4. Set bootstrap DNS: `9.9.9.9`
+### Post-Deployment Tests
 
-After wizard, add blocklists (Filters → DNS Blocklists):
-- See `adguard-setup.conf` for the full recommended list
+**Run the diagnostic suite:**
 
-### 5. Connect and Test
-
-Connect a device to the `PrivacyGuardian` Wi-Fi.
-
-Run these tests:
-- **DNS leak test:** https://dnsleaktest.com — should show only your ISP
-- **IP leak test:** https://ipleak.net — should show only the Pi's WAN IP
-- **WebRTC leak:** https://browserleaks.com/webrtc
-- **AdGuard dashboard:** http://192.168.4.1:3000 — you should see queries being filtered
-
-Run the built-in diagnostic:
 ```bash
 sudo pg-test.sh
 ```
 
----
+**Manual leak tests:**
 
-## Ongoing Maintenance
-
-### Daily (automated via cron)
-- `update-trackers.sh` runs at 3 AM — refreshes tracker IP blocklist
-
-### Monthly (automated via cron)
-- `update-doh-ips.sh` runs on the 1st — checks if DoH resolver IPs have changed
-- Review its output in `/var/log/pg-doh-update.log` and update `nftables.conf` if new IPs appear
-
-### Management commands
-
-```bash
-sudo pg-manage.sh status          # Check all services
-sudo pg-manage.sh clients         # See connected devices
-sudo pg-manage.sh blocked         # See what's being blocked
-sudo pg-manage.sh whitelist example.com   # Unblock a domain
-sudo pg-manage.sh ban 1.2.3.4     # Block an IP immediately
-sudo pg-manage.sh reload          # Apply nftables changes without reboot
-sudo pg-manage.sh backup          # Backup all configs
-```
+- DNS Leak: https://dnsleaktest.com
+- IP Leak: https://ipleak.net (should show your ISP IP)
+- WebRTC Leak: https://browserleaks.com/webrtc
+- Full Bleed: https://whoer.net
 
 ---
 
-## Architecture Overview
+## 🔐 Security Features
 
-```
-Internet
-    │
-   eth0 (WAN — dynamic IP from upstream router)
-    │
-┌───┴────────────────────────────────────────┐
-│  nftables                                  │
-│  ├── ip nat prerouting: force DNS → AGH    │
-│  ├── inet filter forward → privacy_chain   │
-│  │   ├── Block DoH IPs on :443            │
-│  │   ├── Block DoT on :853               │
-│  │   ├── Block DoQ on :8853             │
-│  │   └── Block tracker_ips set          │
-│  └── ip/ip6 nat postrouting: masquerade   │
-│                                            │
-│  AdGuard Home (:53)                        │
-│  ├── Blocklists (domains)                 │
-│  ├── DNSSEC validation                    │
-│  └── Upstream: tls://dns.quad9.net        │
-│                                            │
-│  dnsmasq (DHCP only)                      │
-│  └── 192.168.4.10 – 192.168.4.200        │
-│                                            │
-│  hostapd (Wi-Fi AP)                        │
-│  └── wlan0: PrivacyGuardian SSID          │
-└───┬────────────────────────────────────────┘
-    │
-   wlan0 (LAN — 192.168.4.1/24)
-    │
-Connected Devices (192.168.4.10+)
-```
+- ✅ **Host Isolation** — Docker containers with no host access
+- ✅ **SSH Hardening** — fail2ban + key-only auth
+- ✅ **Admin UI Protection** — IP whitelist + strong password
+- ✅ **Firewall** — Stateful IPv4 + IPv6 filtering
+- ✅ **DNSSEC** — Validation enabled on upstream DNS
+- ✅ **No Special Privileges** — Services run as non-root (where possible)
+- ✅ **Audit Logging** — All blocked domains logged to AdGuard
 
 ---
 
-## What Gets Blocked and What Doesn't
+## 🤝 Contributing
 
-### Blocked ✓
-- DNS-based tracking (ads, analytics, telemetry) — via AdGuard Home
-- Hardcoded DNS (8.8.8.8, 1.1.1.1, etc.) — NAT redirect to AdGuard
-- DNS-over-HTTPS bypasses — nftables blocks known resolver IPs on :443
-- DNS-over-TLS bypasses — nftables blocks :853
-- Known tracker IPs — dynamic FireHOL Level 1 blocklist
-- Device identity from internet — NAT masquerade
+We welcome contributions! See [CONTRIBUTING.md](.github/CONTRIBUTING.md)
 
-### Not Blocked ✗
-- VPN traffic (device-level VPN encrypts before reaching the router)
-- HTTPS payload inspection (encrypted — Pi cannot see inside TLS)
+**Ways to help:**
+
+- Bug reports & fixes
+- Configuration examples
+- Documentation improvements
+- Docker optimization
+- Testing on new Pi hardware
+
+---
+
+## 📝 License
+
+MIT License — See [LICENSE](LICENSE)
+
+---
+
+## ❓ Support
+
+1. **Check the FAQ** → [FAQ.md](docs/troubleshooting/FAQ.md)
+2. **Enable debug mode** → See [DEBUGGING.md](docs/troubleshooting/DEBUGGING.md)
+3. **Review logs** → `docker compose logs -f`
+4. **Open an issue** → GitHub Issues
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] v3.1 — Kubernetes support
+- [ ] v3.2 — REST API for remote management
+- [ ] v3.3 — Mobile app (iOS/Android)
+- [ ] v3.4 — Prometheus metrics export
+- [ ] v3.5 — Multi-Pi clustering
+
+---
+
+**Last Updated:** March 2026  
+**Maintainer:** [Your Name/Organization]
+
 - Ultra-sophisticated telemetry using CDN IPs shared with legitimate traffic
 - Tracking via browser fingerprinting (network-level cannot stop this)
 - Apps with hardcoded IP telemetry not on any blocklist
@@ -207,6 +423,7 @@ Connected Devices (192.168.4.10+)
 ## Troubleshooting
 
 ### "Can't connect to Wi-Fi"
+
 ```bash
 sudo systemctl status hostapd
 sudo journalctl -u hostapd -n 50
@@ -216,6 +433,7 @@ rfkill unblock wifi
 ```
 
 ### "Connected but no internet"
+
 ```bash
 sudo systemctl status nftables
 sudo nft list ruleset | grep forward    # Check forward chain policy
@@ -225,6 +443,7 @@ sysctl net.ipv4.ip_forward              # Should be 1
 ```
 
 ### "DNS not resolving"
+
 ```bash
 # Test AdGuard Home directly:
 dig @192.168.4.1 example.com
@@ -233,6 +452,7 @@ sudo ss -lnup | grep :53    # Check port 53 is listening
 ```
 
 ### "A specific site is broken"
+
 ```bash
 # Check if it's being blocked by AdGuard:
 sudo pg-manage.sh blocked
@@ -241,6 +461,7 @@ sudo pg-manage.sh whitelist example.com
 ```
 
 ### "SSH is blocked / can't access AdGuard UI"
+
 ```bash
 # Check your management IP is correct in nftables.conf
 sudo nft list chain inet filter lan_input | grep MGMT
@@ -250,6 +471,7 @@ sudo nft insert rule inet filter lan_input tcp dport 22 accept
 ```
 
 ### "nftables rules not persisting after reboot"
+
 ```bash
 sudo systemctl enable nftables
 sudo systemctl status nftables
