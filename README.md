@@ -1,4 +1,4 @@
-# 🛡️ Privacy Guardian
+#  Privacy Guardian
 
 > **Zero-Leak Privacy Router for Raspberry Pi & Docker**
 
@@ -9,7 +9,7 @@ Privacy Guardian is a complete privacy-focused network router that blocks tracki
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Using Docker (Recommended)
 
@@ -37,7 +37,7 @@ See [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
 ---
 
-## ✨ What It Does
+##  What It Does
 
 | Feature              | Status | Details                                              |
 | -------------------- | ------ | ---------------------------------------------------- |
@@ -56,7 +56,7 @@ See [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
 ---
 
-## 📋 Hardware Requirements
+##  Hardware Requirements
 
 | Component      | Minimum                     | Recommended                            |
 | -------------- | --------------------------- | -------------------------------------- |
@@ -73,7 +73,7 @@ See [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 privacy-guardian/
@@ -170,7 +170,7 @@ privacy-guardian/
 
 ---
 
-## 🚀 Deployment Options
+##  Deployment Options
 
 ### Option 1: Docker Compose (Recommended)
 
@@ -192,7 +192,7 @@ privacy-guardian/
 
 ---
 
-## 🔍 What Gets Blocked
+##  What Gets Blocked
 
 ### Blocked ✅
 
@@ -214,7 +214,7 @@ privacy-guardian/
 
 ---
 
-## 📊 Architecture Overview
+##  Architecture Overview
 
 ```
                         Internet
@@ -240,7 +240,7 @@ privacy-guardian/
 
 ---
 
-## 🛠️ Management
+##  Management
 
 ### Docker Commands
 
@@ -284,7 +284,7 @@ sudo pg-test.sh
 
 ---
 
-## ⚙️ Configuration
+##  Configuration
 
 ### Environment Variables (.env)
 
@@ -314,7 +314,7 @@ TIMEZONE=Asia/Kolkata
 
 ---
 
-## 📚 Documentation Map
+##  Documentation Map
 
 | Document                                                     | Purpose                    |
 | ------------------------------------------------------------ | -------------------------- |
@@ -328,7 +328,7 @@ TIMEZONE=Asia/Kolkata
 
 ---
 
-## 🧪 Testing
+##  Testing
 
 ### Pre-Deployment Tests
 
@@ -360,7 +360,7 @@ sudo pg-test.sh
 
 ---
 
-## 🔐 Security Features
+##  Security Features
 
 - ✅ **Host Isolation** — Docker containers with no host access
 - ✅ **SSH Hardening** — fail2ban + key-only auth
@@ -372,7 +372,7 @@ sudo pg-test.sh
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](.github/CONTRIBUTING.md)
 
@@ -386,13 +386,13 @@ We welcome contributions! See [CONTRIBUTING.md](.github/CONTRIBUTING.md)
 
 ---
 
-## 📝 License
+##  License
 
 MIT License — See [LICENSE](LICENSE)
 
 ---
 
-## ❓ Support
+##  Support
 
 1. **Check the FAQ** → [FAQ.md](docs/troubleshooting/FAQ.md)
 2. **Enable debug mode** → See [DEBUGGING.md](docs/troubleshooting/DEBUGGING.md)
@@ -401,7 +401,7 @@ MIT License — See [LICENSE](LICENSE)
 
 ---
 
-## 🗺️ Roadmap
+##  Roadmap
 
 - [ ] v3.1 — Kubernetes support
 - [ ] v3.2 — REST API for remote management
