@@ -39,20 +39,20 @@ See [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
 ##  What It Does
 
-| Feature              | Status | Details                                              |
-| -------------------- | ------ | ---------------------------------------------------- |
-| **DNS Filtering**    | ✅     | AdGuard Home blocks tracking/ads/malware domains     |
-| **DoH/DoT Blocking** | ✅     | Blocks DNS-over-HTTPS/TLS bypass attempts            |
-| **IP Blocking**      | ✅     | Dynamic FireHOL tracker IP blocklist (updated daily) |
-| **NAT Masquerade**   | ✅     | Hides device identities behind router IP             |
-| **IPv6 Protection**  | ✅     | Complete IPv6 privacy + leak prevention              |
-| **Wi-Fi AP**         | ✅     | Hostapd-based access point (2.4GHz + 5GHz)           |
-| **DHCP Server**      | ✅     | dnsmasq handles IP assignment                        |
-| **Firewall**         | ✅     | nftables with advanced rules (IPv4 + IPv6)           |
-| **Admin Dashboard**  | ✅     | AdGuard Home Web UI + pg-manage CLI                  |
-| **Fail2Ban**         | ✅     | SSH/Admin UI brute-force protection                  |
+| Feature              | Details                                              |
+| -------------------- | ---------------------------------------------------- |
+| **DNS Filtering**    | AdGuard Home blocks tracking/ads/malware domains     |
+| **DoH/DoT Blocking** | Blocks DNS-over-HTTPS/TLS bypass attempts            |
+| **IP Blocking**      | Dynamic FireHOL tracker IP blocklist (updated daily) |
+| **NAT Masquerade**   | Hides device identities behind router IP             |
+| **IPv6 Protection**  | Complete IPv6 privacy + leak prevention              |
+| **Wi-Fi AP**         | Hostapd-based access point (2.4GHz + 5GHz)           |
+| **DHCP Server**      | dnsmasq handles IP assignment                        |
+| **Firewall**         | nftables with advanced rules (IPv4 + IPv6)           |
+| **Admin Dashboard**  | AdGuard Home Web UI + pg-manage CLI                  |
+| **Fail2Ban**         | SSH/Admin UI brute-force protection                  |
 
-**Expected false-negative rate: <10%**
+
 
 ---
 
@@ -60,7 +60,7 @@ See [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
 | Component      | Minimum                     | Recommended                            |
 | -------------- | --------------------------- | -------------------------------------- |
-| **Board**      | Raspberry Pi 3B             | Raspberry Pi 4 (2GB+) or Pi 5          |
+| **Board**      | Raspberry Pi 3B or eq board | Raspberry Pi 4 (2GB+) or Pi 5          |
 | **OS**         | Raspberry Pi OS Lite 32-bit | Raspberry Pi OS Lite 64-bit (Bookworm) |
 | **Storage**    | 8GB SD Card Class 10        | 32GB A1/A2 rated SSD via USB3          |
 | **Power**      | 2.5A USB-C                  | Official Pi 4/5 PSU                    |
@@ -174,19 +174,19 @@ privacy-guardian/
 
 ### Option 1: Docker Compose (Recommended)
 
-- ✅ Easy deployment & rollback
-- ✅ Containerized isolation
-- ✅ Built-in networking
-- ✅ Simple scaling
+-  Easy deployment & rollback
+-  Containerized isolation
+-  Built-in networking
+-  Simple scaling
 
 **See:** [DEPLOYMENT_DOCKER.md](docs/deployment/DEPLOYMENT_DOCKER.md)
 
 ### Option 2: Traditional Installation
 
-- ⚠️ Requires system-level changes
-- ⚠️ No easy rollback
-- ✅ Direct Pi OS integration
-- ✅ Minimal overhead
+-  Requires system-level changes
+-  No easy rollback
+-  Direct Pi OS integration
+-  Minimal overhead
 
 **See:** [DEPLOYMENT_TRADITIONAL.md](docs/deployment/DEPLOYMENT_TRADITIONAL.md)
 
@@ -194,7 +194,7 @@ privacy-guardian/
 
 ##  What Gets Blocked
 
-### Blocked ✅
+### Blocked 
 
 - **DNS Tracking** — AdGuard Home blocklists
 - **Hardcoded DNS Bypass** — NAT redirect to local DNS
@@ -205,7 +205,7 @@ privacy-guardian/
 - **IP Leaks** — NAT masquerade from 192.168.4.0/24
 - **IPv6 Leaks** — IPv6 privacy + ULA routing
 
-### NOT Blocked ❌
+### NOT Blocked 
 
 - **Device-level VPN** — Encrypted before reaching router
 - **HTTPS Payload** — Pi cannot inspect encrypted traffic
@@ -362,13 +362,13 @@ sudo pg-test.sh
 
 ##  Security Features
 
-- ✅ **Host Isolation** — Docker containers with no host access
-- ✅ **SSH Hardening** — fail2ban + key-only auth
-- ✅ **Admin UI Protection** — IP whitelist + strong password
-- ✅ **Firewall** — Stateful IPv4 + IPv6 filtering
-- ✅ **DNSSEC** — Validation enabled on upstream DNS
-- ✅ **No Special Privileges** — Services run as non-root (where possible)
-- ✅ **Audit Logging** — All blocked domains logged to AdGuard
+-  **Host Isolation** — Docker containers with no host access
+-  **SSH Hardening** — fail2ban + key-only auth
+-  **Admin UI Protection** — IP whitelist + strong password
+-  **Firewall** — Stateful IPv4 + IPv6 filtering
+-  **DNSSEC** — Validation enabled on upstream DNS
+-  **No Special Privileges** — Services run as non-root (where possible)
+-  **Audit Logging** — All blocked domains logged to AdGuard
 
 ---
 
